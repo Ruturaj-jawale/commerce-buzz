@@ -1,0 +1,17 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.9.0
+pydantic-settings>=2.6.0
+python-multipart>=0.0.20
+sqlalchemy>=2.0.36
+python-dotenv>=1.0.1
+httpx>=0.27.0
+bcrypt>=4.0.0
+psycopg[binary]>=3.2.0
+mcp>=2.2.0
+openpyxl>=3.1.0
+pypdf>=5.0.0
+# Optional scanned-PDF OCR path. The host also needs Tesseract and Poppler.
+pdf2image>=1.17.0
+pytesseract>=0.3.13
+Pillow>=10.0.0

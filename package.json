@@ -1,0 +1,38 @@
+{
+  "name": "saas-mcp",
+  "version": "1.0.0",
+  "description": "",
+  "main": "apps/mcp-server/src/server.ts",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "start": "concurrently -n backend,frontend -c green,cyan \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev": "npm run start",
+    "dev:backend": "cd backend && .venv\\Scripts\\python -m uvicorn app.main:app --reload --port 8000",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "dev:mcp": "tsx apps/mcp-server/src/server.ts",
+    "mcp": "npm run dev:mcp",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "dotenv": "^18.0.1",
+    "pg": "^8.23.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@types/pg": "^8.23.1",
+    "concurrently": "^10.0.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}

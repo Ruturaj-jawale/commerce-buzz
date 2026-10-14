@@ -1,0 +1,38 @@
+import fs from "node:fs/promises";
+import { Workbook } from "@oai/artifact-tool";
+
+const outputPath = "D:/saas-mcp/sample-data/universal-commerce-test-transactions-20.csv";
+const headers = ["Order ID", "Date", "Customer Email", "SKU", "Product", "Unit Price", "Quantity", "Total", "Currency", "Status"];
+const rows = [
+  ["NOVA-7001", "2026-10-02 09:15", "arjun.patel+nova01@example.test", "NOVA-MUG", "Aurora Mug", 18.5, 2, 37, "USD", "Complete"],
+  ["NOVA-7002", "2026-10-02 11:40", "meera.shah+nova02@example.test", "NOVA-NOTE", "Orbit Notebook", 12.75, 1, 12.75, "USD", "Complete"],
+  ["NOVA-7003", "2026-10-03 10:05", "kian.reddy+nova03@example.test", "NOVA-LAMP", "Halo Desk Lamp", 64, 1, 64, "USD", "Complete"],
+  ["NOVA-7004", "2026-10-03 15:25", "tanya.roy+nova04@example.test", "NOVA-BAG", "Comet Tote", 28.25, 3, 84.75, "USD", "Complete"],
+  ["NOVA-7005", "2026-10-04 08:50", "dev.menon+nova05@example.test", "NOVA-CASE", "Solar Laptop Sleeve", 42, 1, 42, "USD", "Complete"],
+  ["NOVA-7006", "2026-10-04 13:10", "isha.nair+nova06@example.test", "NOVA-PEN", "Nebula Pen Set", 16.5, 2, 33, "USD", "Complete"],
+  ["NOVA-7007", "2026-10-05 09:35", "rohan.kapoor+nova07@example.test", "NOVA-BOTTLE", "Stellar Bottle", 25, 1, 25, "USD", "Complete"],
+  ["NOVA-7008", "2026-10-05 16:20", "anaya.joshi+nova08@example.test", "NOVA-TRAY", "Lunar Catchall Tray", 31.5, 2, 63, "USD", "Complete"],
+  ["NOVA-7009", "2026-10-06 10:45", "vivaan.singh+nova09@example.test", "NOVA-PLANT", "Atlas Planter", 22.75, 1, 22.75, "USD", "Complete"],
+  ["NOVA-7010", "2026-10-06 14:30", "zoya.khan+nova10@example.test", "NOVA-TOWEL", "Meridian Tea Towel", 14, 4, 56, "USD", "Complete"],
+  ["NOVA-7011", "2026-10-07 09:05", "neel.verma+nova11@example.test", "NOVA-CABLE", "Vector Cable Kit", 19.99, 2, 39.98, "USD", "Complete"],
+  ["NOVA-7012", "2026-10-07 17:15", "riya.desai+nova12@example.test", "NOVA-CANDLE", "Ember Candle", 26.5, 1, 26.5, "USD", "Complete"],
+  ["NOVA-7013", "2026-10-08 08:30", "kabir.bose+nova13@example.test", "NOVA-THROW", "Aster Throw", 58, 1, 58, "USD", "Complete"],
+  ["NOVA-7014", "2026-10-08 12:55", "sana.iyer+nova14@example.test", "NOVA-COASTER", "Eclipse Coaster Set", 21, 3, 63, "USD", "Complete"],
+  ["NOVA-7015", "2026-10-09 11:15", "aryan.gupta+nova15@example.test", "NOVA-STAND", "Prism Phone Stand", 17.25, 2, 34.5, "USD", "Complete"],
+  ["NOVA-7016", "2026-10-09 15:50", "nisha.raman+nova16@example.test", "NOVA-MAT", "Vega Desk Mat", 39, 1, 39, "USD", "Complete"],
+  ["NOVA-7017", "2026-10-10 09:40", "om.malhotra+nova17@example.test", "NOVA-TEA", "Cosmos Tea Infuser", 24.5, 2, 49, "USD", "Complete"],
+  ["NOVA-7018", "2026-10-10 13:35", "leela.sen+nova18@example.test", "NOVA-PILLOW", "Zenith Cushion Cover", 29.75, 2, 59.5, "USD", "Complete"],
+  ["NOVA-7019", "2026-10-11 10:10", "farhan.ali+nova19@example.test", "NOVA-CLIP", "Arc Cable Clips", 9.5, 5, 47.5, "USD", "Complete"],
+  ["NOVA-7020", "2026-10-11 16:45", "mira.dutta+nova20@example.test", "NOVA-BOWL", "Aurora Serving Bowl", 36, 1, 36, "USD", "Complete"],
+];
+
+// Build the data through the spreadsheet artifact API before serializing the CSV.
+const workbook = Workbook.create();
+const sheet = workbook.worksheets.add("Transactions");
+sheet.getRangeByIndexes(0, 0, rows.length + 1, headers.length).values = [headers, ...rows];
+workbook.recalculate();
+const values = sheet.getRangeByIndexes(0, 0, rows.length + 1, headers.length).values;
+const csv = values.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\r\n") + "\r\n";
+await fs.mkdir("D:/saas-mcp/sample-data", { recursive: true });
+await fs.writeFile(outputPath, csv, "utf8");
+console.log(outputPath);
