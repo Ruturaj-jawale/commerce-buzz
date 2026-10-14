@@ -16,11 +16,14 @@ export function LoginPage({ onSuccess, onRegister }: { onSuccess: (session: MeRe
       await login(email, password);
       onSuccess(await fetchMe());
     } catch (err) {
-      setError(
-        err instanceof ApiError && err.status === 401
-          ? "Invalid email or password."
-          : "Login failed. Please try again.",
-      );
+      console.error("Login failed error:", err);
+      if (err instanceof ApiError) {
+        setError(err.status === 401 ? "Invalid email or password." : err.message);
+      } else if (err instanceof Error) {
+        setError(`Connection failed: ${err.message}. Check CORS_ORIGINS on Railway.`);
+      } else {
+        setError("Login failed. Please check network/CORS settings.");
+      }
     } finally {
       setBusy(false);
     }

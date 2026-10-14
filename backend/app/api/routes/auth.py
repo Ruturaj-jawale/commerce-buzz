@@ -17,13 +17,14 @@ router = APIRouter()
 
 def _set_session_cookie(response: Response, access_token: str) -> None:
     settings = get_settings()
+    is_prod = settings.app_env == "production"
     response.set_cookie(
         SESSION_COOKIE,
         access_token,
         max_age=settings.jwt_expire_minutes * 60,
         httponly=True,
-        samesite="lax",
-        secure=settings.app_env == "production",
+        samesite="none" if is_prod else "lax",
+        secure=is_prod,
         path="/",
     )
 

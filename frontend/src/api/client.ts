@@ -9,9 +9,25 @@ export class ApiError extends Error {
   }
 }
 
+const TOKEN_KEY = "saas_mcp_access_token";
+
+export function setAuthToken(token: string | null): void {
+  if (token) {
+    localStorage.setItem(TOKEN_KEY, token);
+  } else {
+    localStorage.removeItem(TOKEN_KEY);
+  }
+}
+
+export function getAuthToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
 function requestHeaders(includeJson = false): HeadersInit {
+  const token = getAuthToken();
   return {
     ...(includeJson ? { "Content-Type": "application/json" } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 }
 
