@@ -36,3 +36,12 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Intermediate/individual markdown files excluded from Git (per master specification consolidation)
+RISK_ARCHITECTURE.md
+RISK_ASSESSMENT_TASKS.md
+RISK_PROGRESS.md
+INTEGRATION_GUIDE.md
+PROGRESS.md
+CHANGELOG.md
+CONTRIBUTING.md

@@ -172,9 +172,31 @@ class Payment(Base):
     failure_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     provider: Mapped[str] = mapped_column(String(40), nullable=False)
     external_ref: Mapped[str] = mapped_column(String(180), nullable=False)
+    channel: Mapped[str] = mapped_column(String(32), default="CARD_SWIPE", nullable=False, index=True)
+    entity_name: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    raw_narration: Mapped[str | None] = mapped_column(Text, nullable=True)
+    direction: Mapped[str] = mapped_column(String(10), default="DEBIT", nullable=False)
+    reference_no: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    reversal_linked_id: Mapped[int | None] = mapped_column(ForeignKey("payments.id"), nullable=True, index=True)
     raw_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     attempts: Mapped[list["PaymentAttempt"]] = relationship(back_populates="payment", cascade="all, delete-orphan")
+
+
+class ReversalLink(Base):
+    """Explicit audit record linking a prior payment with its subsequent return/reversal/refund."""
+
+    __tablename__ = "reversal_links"
+    __table_args__ = (UniqueConstraint("organization_id", "reversal_payment_id", name="uq_org_reversal_link"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
+    original_payment_id: Mapped[int] = mapped_column(ForeignKey("payments.id"), nullable=False, index=True)
+    reversal_payment_id: Mapped[int] = mapped_column(ForeignKey("payments.id"), nullable=False, index=True)
+    match_type: Mapped[str] = mapped_column(String(32), default="RRN_EXACT", nullable=False)
+    amount: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), default="USD", nullable=False)
+    linked_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
 class PaymentAttempt(Base):

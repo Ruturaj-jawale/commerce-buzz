@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from app.api.routes import analytics, auth, health, imports, storefronts, webhooks
+from app.api.routes import analytics, auth, health, imports, risk, storefronts, webhooks
 
 api_router = APIRouter()
 api_router.include_router(health.router)
@@ -11,3 +11,4 @@ api_router.include_router(storefronts.router)
 api_router.include_router(analytics.router)
 api_router.include_router(webhooks.router)
 api_router.include_router(imports.router)
+api_router.include_router(risk.router)

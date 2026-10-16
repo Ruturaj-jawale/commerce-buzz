@@ -25,9 +25,11 @@ from app.db.models import (
     RecoveryAttempt,
     RecoveryCase,
     Refund,
+    ReversalLink,
     Storefront,
 )
 from app.integrations.storefronts.base import CanonicalCommerceEvent
+from app.services.statement_parser import parse_statement_narration
 from app.schemas.analytics import PaymentMetrics, RecoveryMetrics
 from app.schemas.payments import (
     OrderMetricsRead,
@@ -131,6 +133,10 @@ class PaymentService:
                     unit_price=float(item.get("price") or 0),
                 )
             )
+        payment_ref = str(metadata.get("payment_id") or canonical.order_id)
+        payment = self._ensure_payment(db, organization, storefront, canonical, payment_ref)
+        if payment.status == "attempted":
+            payment.status = "succeeded"
 
     def _get_payment(self, db: Session, organization: Organization, storefront: Storefront, payment_ref: str) -> Payment | None:
         return db.scalar(
@@ -140,10 +146,131 @@ class PaymentService:
             )
         )
 
+    def _extract_narration(self, canonical: CanonicalCommerceEvent) -> str:
+        props = canonical.properties or {}
+        if props.get("narration"):
+            return str(props["narration"])
+        if props.get("description"):
+            return str(props["description"])
+        items = props.get("items")
+        if isinstance(items, list) and items:
+            name = items[0].get("name") or items[0].get("title")
+            if name:
+                return str(name)
+        return ""
+
+    def _reconcile_reversal(
+        self,
+        db: Session,
+        organization: Organization,
+        reversal_payment: Payment,
+        canonical: CanonicalCommerceEvent,
+    ) -> Payment | None:
+        """Finds earlier matching debit transaction, marks prior as 'failed', and marks reversal as 'returned'."""
+        candidate = None
+        match_type = "RRN_EXACT"
+
+        # 1. Match by reference number (RRN / UTR)
+        if reversal_payment.reference_no:
+            candidate = db.scalar(
+                select(Payment).where(
+                    Payment.organization_id == organization.id,
+                    Payment.id != reversal_payment.id,
+                    Payment.reference_no == reversal_payment.reference_no,
+                    Payment.direction == "DEBIT",
+                    Payment.status != "returned",
+                ).order_by(Payment.id.desc()).limit(1)
+            )
+
+        # 2. Match by Entity Name and exact Amount
+        if candidate is None and reversal_payment.entity_name and reversal_payment.entity_name != "Unknown Entity":
+            match_type = "WINDOW_AMOUNT"
+            candidate = db.scalar(
+                select(Payment).where(
+                    Payment.organization_id == organization.id,
+                    Payment.id != reversal_payment.id,
+                    Payment.entity_name == reversal_payment.entity_name,
+                    Payment.amount == reversal_payment.amount,
+                    Payment.direction == "DEBIT",
+                    Payment.status != "returned",
+                ).order_by(Payment.id.desc()).limit(1)
+            )
+            if candidate is None:
+                stem = reversal_payment.entity_name.replace("ATM", "").strip()
+                if len(stem) >= 3:
+                    candidate = db.scalar(
+                        select(Payment).where(
+                            Payment.organization_id == organization.id,
+                            Payment.id != reversal_payment.id,
+                            Payment.entity_name.ilike(f"%{stem[:24]}%"),
+                            Payment.amount == reversal_payment.amount,
+                            Payment.direction == "DEBIT",
+                            Payment.status != "returned",
+                        ).order_by(Payment.id.desc()).limit(1)
+                    )
+
+        # 3. Match by Order ID
+        if candidate is None and reversal_payment.order_id:
+            match_type = "ORDER_ID"
+            candidate = db.scalar(
+                select(Payment).where(
+                    Payment.organization_id == organization.id,
+                    Payment.id != reversal_payment.id,
+                    Payment.order_id == reversal_payment.order_id,
+                    Payment.direction == "DEBIT",
+                    Payment.status != "returned",
+                ).order_by(Payment.id.desc()).limit(1)
+            )
+
+        if candidate is not None:
+            # Mark previous transaction as failed
+            candidate.status = "failed"
+            candidate.failure_code = "RETURN_REVERSED"
+            candidate.failure_reason = "Transaction returned/reversed"
+            candidate.reversal_linked_id = reversal_payment.id
+
+            # Mark current transaction as returned
+            reversal_payment.status = "returned"
+            reversal_payment.direction = "CREDIT"
+            reversal_payment.reversal_linked_id = candidate.id
+
+            # Save explicit ReversalLink
+            existing_link = db.scalar(
+                select(ReversalLink).where(
+                    ReversalLink.organization_id == organization.id,
+                    ReversalLink.reversal_payment_id == reversal_payment.id,
+                )
+            )
+            if existing_link is None:
+                db.add(
+                    ReversalLink(
+                        organization_id=organization.id,
+                        original_payment_id=candidate.id,
+                        reversal_payment_id=reversal_payment.id,
+                        match_type=match_type,
+                        amount=reversal_payment.amount,
+                        currency=reversal_payment.currency,
+                    )
+                )
+            db.flush()
+            return candidate
+        else:
+            reversal_payment.status = "returned"
+            reversal_payment.direction = "CREDIT"
+            return None
+
     def _ensure_payment(self, db: Session, organization: Organization, storefront: Storefront, canonical: CanonicalCommerceEvent, payment_ref: str) -> Payment:
         payment = self._get_payment(db, organization, storefront, payment_ref)
         if payment is None:
             order = self._ensure_order(db, organization, storefront, canonical)
+            narration = self._extract_narration(canonical)
+            parsed = parse_statement_narration(narration) if narration else None
+
+            channel = canonical.properties.get("channel") or (parsed.channel if parsed else "CARD_SWIPE")
+            entity_name = canonical.properties.get("entity_name") or (parsed.entity_name if parsed else (canonical.properties.get("customer_id") or "Unknown Entity"))
+            reference_no = canonical.properties.get("reference_no") or (parsed.reference_no if parsed else None)
+            direction = canonical.properties.get("direction") or (parsed.direction_hint if (parsed and parsed.direction_hint) else "DEBIT")
+
             payment = Payment(
                 organization_id=organization.id,
                 storefront_id=storefront.id,
@@ -153,11 +280,20 @@ class PaymentService:
                 amount=canonical.revenue,
                 currency=canonical.currency,
                 provider=storefront.provider,
+                channel=channel,
+                entity_name=entity_name,
+                raw_narration=narration or None,
+                direction=direction,
+                reference_no=reference_no,
                 external_ref=f"payment:{payment_ref}",
                 raw_json=json.dumps(canonical.properties),
             )
             db.add(payment)
             db.flush()
+
+            if (parsed and parsed.is_reversal) or direction == "CREDIT" or canonical.event_name in {"refund", "refund_created"}:
+                self._reconcile_reversal(db, organization, payment, canonical)
+
         return payment
 
     def _next_attempt_no(self, db: Session, payment_id: int) -> int:
@@ -202,6 +338,10 @@ class PaymentService:
 
     def _land_refund(self, db: Session, organization: Organization, storefront: Storefront, canonical: CanonicalCommerceEvent, key: str, metadata: dict[str, Any]) -> None:
         order = self._ensure_order(db, organization, storefront, canonical)
+        payment_ref = str(metadata.get("payment_id") or f"refund-{canonical.order_id}")
+        refund_payment = self._ensure_payment(db, organization, storefront, canonical, payment_ref)
+        self._reconcile_reversal(db, organization, refund_payment, canonical)
+
         db.add(
             Refund(
                 organization_id=organization.id,

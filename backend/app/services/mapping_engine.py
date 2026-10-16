@@ -39,14 +39,14 @@ MAX_ISSUES_STORED = 200
 # Normalized aliases (lowercase, alphanumeric only) used for auto-suggestion,
 # ordered from most to least specific per target field.
 FIELD_ALIASES: dict[str, list[str]] = {
-    "order_id": ["orderid", "ordernumber", "orderno", "ordernum", "transactionid", "order", "reference", "id"],
-    "revenue": ["revenue", "grandtotal", "ordertotal", "totalamount", "total", "amount", "saleamount", "sales", "ordervalue", "gross"],
+    "order_id": ["orderid", "ordernumber", "orderno", "ordernum", "transactionid", "refno", "referenceno", "rrn", "utr", "chequeno", "chqrefno", "authcode", "order", "reference", "id"],
+    "revenue": ["revenue", "grandtotal", "ordertotal", "totalamount", "total", "amount", "debit", "withdrawal", "debitamount", "dr", "txnamount", "saleamount", "sales", "ordervalue", "gross", "credit", "deposit"],
     "currency": ["currencycode", "currency", "ccy"],
-    "customer_id": ["customerid", "customeremail", "customer", "email", "buyeremail", "buyer", "client", "customername", "account"],
-    "event_name": ["eventname", "event", "status", "type", "action"],
-    "occurred_at": ["createdat", "orderdate", "transactiondate", "purchasedate", "purchasedat", "paidat", "placedat", "occurredat", "datetime", "timestamp", "created", "date"],
-    "items.product_id": ["productsku", "itemsku", "variantsku", "sku", "productid", "itemid"],
-    "items.name": ["productname", "producttitle", "itemname", "itemtitle", "product", "item", "title", "description"],
+    "customer_id": ["customerid", "customeremail", "customer", "email", "buyeremail", "buyer", "client", "customername", "account", "accountno", "accno", "cardno", "cardnumber"],
+    "event_name": ["eventname", "event", "status", "type", "action", "drcr"],
+    "occurred_at": ["createdat", "orderdate", "transactiondate", "txndate", "valuedate", "postingdate", "statementdate", "purchasedate", "purchasedat", "paidat", "placedat", "occurredat", "datetime", "timestamp", "created", "date"],
+    "items.product_id": ["productsku", "itemsku", "variantsku", "sku", "productid", "itemid", "mcc", "terminalid"],
+    "items.name": ["narration", "particulars", "description", "remarks", "transactiondetails", "merchant", "merchantname", "productname", "producttitle", "itemname", "itemtitle", "product", "item", "title"],
     "items.price": ["unitprice", "itemprice", "priceeach", "rate", "price"],
     "items.quantity": ["itemquantity", "linequantity", "quantity", "qty", "units", "count"],
 }

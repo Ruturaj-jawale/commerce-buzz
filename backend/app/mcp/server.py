@@ -14,6 +14,7 @@ from app.mcp.resources.system_resource import create_system_info_resource
 from app.mcp.tools.commerce_tools import create_storefront_and_analytics_tools
 from app.mcp.tools.health_tool import create_health_check_tool
 from app.mcp.tools.payment_tools import create_payment_tools
+from app.mcp.tools.risk_tools import create_risk_tools
 from app.services.health_service import HealthService
 
 
@@ -71,6 +72,8 @@ def create_mcp_server(organization: Organization) -> McpServer:
     for tool in create_storefront_and_analytics_tools(organization):
         server.register_tool(tool)
     for tool in create_payment_tools(organization):
+        server.register_tool(tool)
+    for tool in create_risk_tools(organization):
         server.register_tool(tool)
     server.register_resource(create_system_info_resource(settings))
     server.register_resource(create_analytics_summary_resource(organization))

@@ -79,9 +79,14 @@ export async function putJson<T>(path: string, body: unknown): Promise<T> {
 export async function uploadFile<T>(path: string, file: File, fields: Record<string, string> = {}): Promise<T> {
   const form = new FormData();
   form.append("file", file);
-  Object.entries(fields).forEach(([name, value]) => form.append(name, value));
+  Object.entries(fields).forEach(([name, value]) => {
+    if (value !== undefined && value !== null && value !== "") form.append(name, value);
+  });
+  const token = getAuthToken();
+  const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
   const response = await fetch(`${getApiUrl()}${path}`, {
     method: "POST",
+    headers,
     credentials: "include",
     body: form,
   });

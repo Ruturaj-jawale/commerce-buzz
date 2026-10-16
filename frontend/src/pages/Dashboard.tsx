@@ -11,8 +11,15 @@ import {
   OrderDistributionChart,
   PaymentRecoveryWidget,
 } from "../components/AnalyticsCharts";
+import { RiskAssessmentPanel } from "../components/RiskAssessmentPanel";
+import {
+  fetchSystemLens,
+  fetchRiskAssessment,
+  type SystemLensProfile,
+  type RiskAssessmentSummary,
+} from "../api/risk";
 
-type View = "overview" | "transactions" | "integrations" | "import";
+type View = "overview" | "transactions" | "risk" | "integrations" | "import";
 
 export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout: () => void }) {
   const {
@@ -38,6 +45,21 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
   const [status, setStatus] = useState("");
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [transactionTotal, setTransactionTotal] = useState(0);
+
+  // Smart Adaptive Persona Lens (Commerce vs Bank & Card Switch)
+  const [systemLens, setSystemLens] = useState<SystemLensProfile | null>(null);
+  const [userLensMode, setUserLensMode] = useState<"auto" | "COMMERCE" | "BANK_NETWORK">("auto");
+  const [bankRiskSummary, setBankRiskSummary] = useState<RiskAssessmentSummary | null>(null);
+
+  useEffect(() => {
+    void fetchSystemLens().then(setSystemLens).catch(() => {});
+    void fetchRiskAssessment().then(setBankRiskSummary).catch(() => {});
+  }, []);
+
+  const activeLens =
+    userLensMode === "auto"
+      ? (systemLens?.recommended_lens ?? "COMMERCE")
+      : userLensMode;
 
   useEffect(() => {
     if (view === "transactions") {
@@ -65,12 +87,15 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
       <aside className="sidebar">
         <h1>
           Commerce<br />
-          <span>Analytics MCP</span>
+          <span style={{ color: activeLens === "BANK_NETWORK" ? "#c084fc" : "#60a5fa" }}>
+            {activeLens === "BANK_NETWORK" ? "Bank & Card Switch" : "Analytics MCP"}
+          </span>
         </h1>
         {(
           [
             ["overview", "Dashboard"],
             ["transactions", "Transactions"],
+            ["risk", "Risk & Card Sentinel"],
             ["integrations", "Integrations"],
             ["import", "Import Studio"],
           ] as const
@@ -90,12 +115,16 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
           <div>
             <h1>
               {view === "overview"
-                ? "Commerce & Payment Analytics"
+                ? activeLens === "BANK_NETWORK"
+                  ? "Bank & Card Switch Command Center"
+                  : "Commerce & Payment Analytics"
                 : view === "transactions"
                   ? "Transactions Explorer"
-                  : view === "integrations"
-                    ? "Integrations Overview"
-                    : "Schema & Data Type Import Studio"}
+                  : view === "risk"
+                    ? "Card Network & ATM Risk Surveillance"
+                    : view === "integrations"
+                      ? "Integrations Overview"
+                      : "Schema & Data Type Import Studio"}
             </h1>
             <p className="lede">
               {session.organization.name} · {session.user.email}
@@ -104,7 +133,296 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
           <button onClick={onLogout}>Sign out</button>
         </header>
 
-        {view === "overview" && (
+        {/* Adaptive Surveillance Persona Switcher */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            background: "linear-gradient(90deg, #0f172a 0%, #1e293b 100%)",
+            padding: "0.65rem 1.25rem",
+            borderRadius: "10px",
+            marginBottom: "1.5rem",
+            border: "1px solid #334155",
+            flexWrap: "wrap",
+            gap: "0.75rem",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+            <span
+              style={{
+                fontSize: "0.78rem",
+                fontWeight: 700,
+                color: "#94a3b8",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+              }}
+            >
+              Active Perspective:
+            </span>
+            <div
+              style={{
+                display: "inline-flex",
+                background: "#090d16",
+                borderRadius: "8px",
+                padding: "3px",
+                border: "1px solid #1e293b",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setUserLensMode("auto")}
+                style={{
+                  background:
+                    userLensMode === "auto"
+                      ? "linear-gradient(90deg, #2563eb, #7c3aed)"
+                      : "transparent",
+                  color: userLensMode === "auto" ? "#ffffff" : "#94a3b8",
+                  border: "none",
+                  padding: "0.4rem 0.8rem",
+                  borderRadius: "6px",
+                  fontSize: "0.82rem",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                ✨ Auto-Detect{" "}
+                {systemLens
+                  ? `(${systemLens.detected_mode === "BANK_NETWORK" ? "Bank Switch" : "Commerce"})`
+                  : ""}
+              </button>
+              <button
+                type="button"
+                onClick={() => setUserLensMode("COMMERCE")}
+                style={{
+                  background:
+                    userLensMode === "COMMERCE"
+                      ? "linear-gradient(90deg, #2563eb, #0284c7)"
+                      : "transparent",
+                  color: userLensMode === "COMMERCE" ? "#ffffff" : "#94a3b8",
+                  border: "none",
+                  padding: "0.4rem 0.8rem",
+                  borderRadius: "6px",
+                  fontSize: "0.82rem",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                🛒 Commerce Analytics
+              </button>
+              <button
+                type="button"
+                onClick={() => setUserLensMode("BANK_NETWORK")}
+                style={{
+                  background:
+                    userLensMode === "BANK_NETWORK"
+                      ? "linear-gradient(90deg, #7c3aed, #db2777)"
+                      : "transparent",
+                  color: userLensMode === "BANK_NETWORK" ? "#ffffff" : "#94a3b8",
+                  border: "none",
+                  padding: "0.4rem 0.8rem",
+                  borderRadius: "6px",
+                  fontSize: "0.82rem",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                🏦 Bank & Card Network Switch
+              </button>
+            </div>
+          </div>
+
+          {systemLens && (
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <span
+                style={{
+                  fontSize: "0.78rem",
+                  background:
+                    systemLens.detected_mode === "BANK_NETWORK"
+                      ? "rgba(124, 58, 237, 0.15)"
+                      : "rgba(37, 99, 235, 0.15)",
+                  color: systemLens.detected_mode === "BANK_NETWORK" ? "#c084fc" : "#93c5fd",
+                  padding: "0.3rem 0.75rem",
+                  borderRadius: "999px",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  fontWeight: 500,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.4rem",
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: "7px",
+                    height: "7px",
+                    borderRadius: "50%",
+                    background:
+                      systemLens.detected_mode === "BANK_NETWORK" ? "#a855f7" : "#3b82f6",
+                  }}
+                />
+                {systemLens.rationale}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {view === "overview" && activeLens === "BANK_NETWORK" && (
+          <>
+            <p className="lede">
+              Interbank clearing switch surveillance, terminal failure monitoring, and reversal settlement reconciling.
+            </p>
+
+            {/* ── 6 Banking Status Cards ── */}
+            <section className="grid kpis">
+              <StatusCard
+                label="Interbank Settlement Vol"
+                value={`${bankRiskSummary?.currency ?? currency} ${(bankRiskSummary?.total_volume ?? 0).toFixed(2)}`}
+              />
+              <StatusCard
+                label="Total Switching Records"
+                value={String(bankRiskSummary?.total_transactions ?? 0)}
+              />
+              <StatusCard
+                label="Systemic Rail Failure Rate"
+                value={`${(bankRiskSummary?.overall_failure_rate ?? 0).toFixed(1)}%`}
+              />
+              <StatusCard
+                label="ATM & Terminal Failures"
+                value={String(bankRiskSummary?.failed_transactions ?? 0)}
+              />
+              <StatusCard
+                label="Reconciled Reversals (RRN)"
+                value={String(bankRiskSummary?.returned_transactions ?? 0)}
+              />
+              <StatusCard
+                label="Mastercard/Visa Sentinel"
+                value={
+                  bankRiskSummary && bankRiskSummary.overall_risk_score > 60
+                    ? "ELEVATED RISK"
+                    : "ONLINE SHIELD"
+                }
+              />
+            </section>
+
+            {/* ── Level 1 Bank Widgets: Rail Breakdown & Reversal Health ── */}
+            <section className="two-column">
+              <div className="panel chart-panel">
+                <div className="chart-header">
+                  <div>
+                    <h3>Switching Rails Performance</h3>
+                    <p className="muted">
+                      ATM cash dispensers, UPI switches, POS card swipes, and bank transfers
+                    </p>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gap: "0.85rem", marginTop: "1rem" }}>
+                  {bankRiskSummary?.channel_breakdown.map((ch) => (
+                    <div
+                      key={ch.channel}
+                      style={{
+                        background: "#0f172a",
+                        padding: "0.85rem 1rem",
+                        borderRadius: "8px",
+                        border: "1px solid #1e293b",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          marginBottom: "0.35rem",
+                        }}
+                      >
+                        <strong>{ch.channel.replace("_", " ")}</strong>
+                        <span
+                          style={{
+                            color: ch.failure_rate_percentage > 20 ? "#ef4444" : "#10b981",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {ch.failure_rate_percentage.toFixed(1)}% Failure Rate
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          fontSize: "0.82rem",
+                          color: "#94a3b8",
+                        }}
+                      >
+                        <span>
+                          {ch.total_transactions} txns · Vol: {bankRiskSummary.currency}{" "}
+                          {ch.total_volume.toFixed(2)}
+                        </span>
+                        <span>
+                          {ch.failed_transactions} failed · {ch.returned_transactions} reversed
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  {(!bankRiskSummary || bankRiskSummary.channel_breakdown.length === 0) && (
+                    <p className="muted" style={{ padding: "1.5rem", textAlign: "center" }}>
+                      No statement feeds imported yet. Upload an SBI statement CSV/XLSX to populate
+                      rail metrics.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="panel chart-panel">
+                <div className="chart-header">
+                  <div>
+                    <h3>Automated Reversal Reconciliation</h3>
+                    <p className="muted">Dual-state RRN & UTR settlement matching engine</p>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gap: "1rem", marginTop: "1rem" }}>
+                  <div
+                    style={{
+                      background: "#0f172a",
+                      padding: "1rem",
+                      borderRadius: "8px",
+                      border: "1px solid #1e293b",
+                    }}
+                  >
+                    <h4 style={{ margin: "0 0 0.5rem 0", color: "#60a5fa" }}>
+                      RRN Reference Matching
+                    </h4>
+                    <p style={{ margin: 0, fontSize: "0.85rem", color: "#cbd5e1", lineHeight: 1.5 }}>
+                      When reversal narrations (e.g., <em>FAILED TXN REFUND</em> or{" "}
+                      <em>ATM CASH DISPENSE REV</em>) are detected, the system pairs them with prior
+                      debits via RRN, updates the debit to <strong>failed</strong>, and marks the return
+                      as <strong>returned</strong>.
+                    </p>
+                  </div>
+                  <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      onClick={() => setView("risk")}
+                      style={{
+                        background: "linear-gradient(90deg, #7c3aed, #db2777)",
+                        border: "none",
+                      }}
+                    >
+                      🛡️ Open Risk & Card Sentinel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setView("import")}
+                      style={{ background: "#334155", border: "none" }}
+                    >
+                      📄 Import Bank Statement
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </>
+        )}
+
+        {view === "overview" && activeLens === "COMMERCE" && (
           <>
             <p className="lede">
               Universal, provider-neutral commerce analytics shared by the dashboard and MCP tools.
@@ -242,6 +560,10 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
               )}
             </section>
           </>
+        )}
+
+        {view === "risk" && (
+          <RiskAssessmentPanel />
         )}
 
         {view === "import" && (
