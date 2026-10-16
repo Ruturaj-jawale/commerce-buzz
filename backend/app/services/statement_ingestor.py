@@ -18,6 +18,7 @@ import csv
 import hashlib
 import io
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -221,89 +222,277 @@ def _extract_rows_excel(content: bytes) -> list[dict[str, Any]]:
     raise RuntimeError("Cannot read Excel file. Install openpyxl or xlrd.")
 
 
+def _extract_text_table_strategy(text: str) -> list[dict[str, Any]]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return []
+    # Check delimited text (comma, tab, pipe, semicolon)
+    for delim in ("\t", "|", ",", ";"):
+        candidate_idx = next((i for i, line in enumerate(lines[:25]) if line.count(delim) >= 2), None)
+        if candidate_idx is not None:
+            table_lines = [line for line in lines[candidate_idx:] if line.count(delim) >= 1]
+            if len(table_lines) >= 2:
+                reader = csv.DictReader(io.StringIO("\n".join(table_lines)), delimiter=delim)
+                cols = [str(c).strip() for c in (reader.fieldnames or [])]
+                if any(_norm(c) in _DATE_ALIASES or _norm(c) in _NARR_ALIASES for c in cols):
+                    parsed_rows = [{k.strip(): str(v).strip() for k, v in r.items() if k is not None} for r in reader]
+                    if parsed_rows:
+                        return parsed_rows
+
+    # Check multi-space column alignment
+    for i, line in enumerate(lines[:25]):
+        cols = [p.strip() for p in re.split(r"\s{2,}", line) if p.strip()]
+        if len(cols) >= 3 and any(_norm(c) in _DATE_ALIASES or _norm(c) in _NARR_ALIASES or _norm(c) in _DEBIT_ALIASES or _norm(c) in _AMT_ALIASES for c in cols):
+            candidate_rows = []
+            for row_line in lines[i + 1:]:
+                vals = [p.strip() for p in re.split(r"\s{2,}", row_line) if p.strip()]
+                if not vals:
+                    continue
+                if len(vals) == len(cols):
+                    candidate_rows.append({cols[c]: vals[c] for c in range(len(cols))})
+                elif abs(len(vals) - len(cols)) <= 1 and len(vals) >= 2:
+                    candidate_rows.append({cols[c]: vals[c] if c < len(vals) else "" for c in range(len(cols))})
+            if candidate_rows:
+                return candidate_rows
+
+    return []
+
+
+def _extract_transactions_by_pattern(text: str) -> list[dict[str, Any]]:
+    """Scan bank statement text for transaction patterns:
+    Date followed by Narration/Description followed by Monetary Amounts.
+    """
+    date_re = re.compile(
+        r"^\s*(\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4}|\d{4}[-/\.]\d{1,2}[-/\.]\d{1,2}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{2,4})\s+(.+)$"
+    )
+    amt_re = re.compile(r"\b([0-9]{1,3}(?:,[0-9]{3})*\.[0-9]{2}|[0-9]+\.[0-9]{2})\b")
+
+    rows: list[dict[str, Any]] = []
+    lines = text.splitlines()
+
+    for line in lines:
+        cleaned_line = line.strip()
+        if not cleaned_line:
+            continue
+
+        m = date_re.match(cleaned_line)
+        if not m:
+            # Check if this line is a continuation narration for the previous transaction
+            if rows and len(cleaned_line) > 3 and not any(kw in cleaned_line.lower() for kw in ("page", "total", "balance carried", "statement of", "account no")):
+                rows[-1]["narration"] = f"{rows[-1]['narration']} {cleaned_line}".strip()
+            continue
+
+        date_val = m.group(1)
+        rest = m.group(2).strip()
+
+        # Check for optional second date (value date)
+        m_val = date_re.match(rest)
+        if m_val:
+            rest = m_val.group(2).strip()
+
+        amt_matches = list(amt_re.finditer(rest))
+        if not amt_matches:
+            continue
+
+        first_amt = amt_matches[0]
+        narr = rest[:first_amt.start()].strip()
+        amts = [match.group(1) for match in amt_matches]
+        num_amts = [float(a.replace(",", "")) for a in amts]
+
+        debit = 0.0
+        credit = 0.0
+        balance = None
+
+        if len(num_amts) >= 3:
+            # Format: Debit, Credit, Balance
+            debit = num_amts[0]
+            credit = num_amts[1]
+            balance = num_amts[2]
+        elif len(num_amts) == 2:
+            amt = num_amts[0]
+            balance = num_amts[1]
+            is_cred = any(w in narr.upper() for w in ("CREDIT", "REFUND", "REV", "RETURN", "SALARY", "CR", "DEPOSIT"))
+            if is_cred:
+                credit = amt
+            else:
+                debit = amt
+        elif len(num_amts) == 1:
+            amt = num_amts[0]
+            is_cred = any(w in narr.upper() for w in ("CREDIT", "REFUND", "REV", "RETURN", "SALARY", "CR", "DEPOSIT"))
+            if is_cred:
+                credit = amt
+            else:
+                debit = amt
+
+        if debit > 0 or credit > 0 or narr:
+            rows.append({
+                "date": date_val,
+                "narration": narr,
+                "debit": str(debit) if debit > 0 else "",
+                "credit": str(credit) if credit > 0 else "",
+                "balance": str(balance) if balance is not None else "",
+            })
+
+    return rows
+
+
 def _extract_rows_pdf(content: bytes, password: str | None = None) -> list[dict[str, Any]]:
-    """Extract rows from PDF. Tries text extraction first; falls back to OCR if needed."""
+    """Extract rows from PDF.
+    Multi-tier strategy:
+    1. Bordered table extraction via pdfplumber
+    2. Borderless text-aligned table extraction via pdfplumber
+    3. Delimited and whitespace-aligned column text extraction
+    4. Universal transaction pattern regex scanner
+    5. Scanned document OCR fallback (pdf2image + pytesseract)
+    """
     pdfplumber = _try_import("pdfplumber")
     pikepdf    = _try_import("pikepdf")
+    pypdf      = _try_import("pypdf")
 
     pdf_bytes = content
 
     # Decrypt if password-protected
-    if pikepdf and password:
-        try:
-            pdf_obj = pikepdf.open(io.BytesIO(content), password=password)
-            buf = io.BytesIO()
-            pdf_obj.save(buf)
-            pdf_bytes = buf.getvalue()
-            pdf_obj.close()
-            logger.info("PDF decrypted successfully with provided password.")
-        except Exception as exc:
-            raise ValueError(f"PDF password incorrect or PDF is corrupt: {exc}") from exc
+    if password:
+        decrypted = False
+        if pikepdf:
+            try:
+                pdf_obj = pikepdf.open(io.BytesIO(content), password=password)
+                buf = io.BytesIO()
+                pdf_obj.save(buf)
+                pdf_bytes = buf.getvalue()
+                pdf_obj.close()
+                decrypted = True
+                logger.info("PDF decrypted successfully with pikepdf.")
+            except Exception as exc:
+                logger.debug("pikepdf decryption failed: %s", exc)
 
-    if not pdfplumber:
-        raise RuntimeError("pdfplumber not installed. Cannot read PDF files.")
+        if not decrypted and pypdf:
+            try:
+                reader = pypdf.PdfReader(io.BytesIO(content))
+                if reader.is_encrypted:
+                    reader.decrypt(password)
+                    writer = pypdf.PdfWriter()
+                    for p in reader.pages:
+                        writer.add_page(p)
+                    buf = io.BytesIO()
+                    writer.write(buf)
+                    pdf_bytes = buf.getvalue()
+                    decrypted = True
+                    logger.info("PDF decrypted successfully with pypdf.")
+            except Exception as exc:
+                logger.debug("pypdf decryption failed: %s", exc)
 
     rows: list[dict[str, Any]] = []
-    headers_detected: list[str] | None = None
+    extracted_text = ""
 
-    try:
-        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            for page_num, page in enumerate(pdf.pages):
-                # 1. Try structured table extraction
-                tables = page.extract_tables()
-                for table in tables:
-                    if not table:
-                        continue
-                    # First non-empty row with at least 2 cells = header
-                    header_row = None
-                    data_start = 0
-                    for i, row in enumerate(table):
-                        clean = [c for c in row if c and str(c).strip()]
-                        if len(clean) >= 2:
-                            header_row = [str(c).strip() if c else f"col_{j}" for j, c in enumerate(row)]
-                            data_start = i + 1
-                            break
-                    if header_row is None:
-                        continue
-
-                    if headers_detected is None:
-                        headers_detected = header_row
-
-                    for row in table[data_start:]:
-                        if not any(c for c in row if c and str(c).strip()):
+    # Strategies 1, 2, and text accumulation via pdfplumber
+    if pdfplumber:
+        try:
+            with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                for page in pdf.pages:
+                    # Strategy 1: Grid-line tables
+                    tables = page.extract_tables() or []
+                    for table in tables:
+                        if not table:
                             continue
-                        rows.append({
-                            header_row[j]: str(row[j]).strip() if j < len(row) and row[j] else ""
-                            for j in range(len(header_row))
-                        })
+                        header_row = None
+                        data_start = 0
+                        for i, r in enumerate(table):
+                            clean = [c for c in r if c and str(c).strip()]
+                            if len(clean) >= 2 and any(
+                                any(kw in str(c).lower() for kw in ("date", "narration", "particular", "debit", "credit", "amount"))
+                                for c in clean
+                            ):
+                                header_row = [str(c).strip() if c else f"col_{j}" for j, c in enumerate(r)]
+                                data_start = i + 1
+                                break
+                        if header_row:
+                            for r in table[data_start:]:
+                                if any(c for c in r if c and str(c).strip()):
+                                    rows.append({
+                                        header_row[j]: str(r[j]).strip() if j < len(r) and r[j] else ""
+                                        for j in range(len(header_row))
+                                    })
 
-                # 2. If no tables found on this page, try line-by-line text parse
-                if not tables:
-                    text = page.extract_text() or ""
-                    lines = [l.strip() for l in text.split("\n") if l.strip()]
-                    if not lines:
-                        continue
+                    # Strategy 2: Borderless text-aligned tables
+                    if not rows:
+                        borderless_tables = page.extract_tables(table_settings={
+                            "vertical_strategy": "text",
+                            "horizontal_strategy": "text",
+                            "intersection_x_tolerance": 5,
+                        }) or []
+                        for table in borderless_tables:
+                            if not table:
+                                continue
+                            header_row = None
+                            data_start = 0
+                            for i, r in enumerate(table):
+                                clean = [c for c in r if c and str(c).strip()]
+                                if len(clean) >= 2 and any(
+                                    any(kw in str(c).lower() for kw in ("date", "narration", "particular", "debit", "credit", "amount"))
+                                    for c in clean
+                                ):
+                                    header_row = [str(c).strip() if c else f"col_{j}" for j, c in enumerate(r)]
+                                    data_start = i + 1
+                                    break
+                            if header_row:
+                                for r in table[data_start:]:
+                                    if any(c for c in r if c and str(c).strip()):
+                                        rows.append({
+                                            header_row[j]: str(r[j]).strip() if j < len(r) and r[j] else ""
+                                            for j in range(len(header_row))
+                                        })
 
-                    # Detect header line (contains date/narration/debit/credit keywords)
-                    header_keywords = {"date", "narration", "particulars", "debit", "credit", "amount", "balance"}
-                    for i, line in enumerate(lines):
-                        cols = line.split()
-                        if any(c.lower() in header_keywords for c in cols):
-                            if headers_detected is None:
-                                headers_detected = cols
-                            for data_line in lines[i + 1:]:
-                                parts = data_line.split()
-                                if len(parts) >= len(headers_detected):
-                                    rows.append(dict(zip(headers_detected, parts)))
-                            break
+                    # Accumulate text for Strategy 3 & 4
+                    p_text = page.extract_text() or ""
+                    if p_text:
+                        extracted_text += "\n" + p_text
+        except Exception as exc:
+            logger.debug("pdfplumber extraction failed: %s", exc)
+
+    if rows:
+        return rows
+
+    # Fallback to pypdf text extraction if text is empty
+    if not extracted_text.strip() and pypdf:
+        try:
+            reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+            extracted_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        except Exception as exc:
+            logger.debug("pypdf text extraction failed: %s", exc)
+
+    # Strategy 3: Delimited and whitespace-aligned columns from text
+    if extracted_text.strip():
+        text_rows = _extract_text_table_strategy(extracted_text)
+        if text_rows:
+            return text_rows
+
+        # Strategy 4: Universal transaction pattern regex
+        pattern_rows = _extract_transactions_by_pattern(extracted_text)
+        if pattern_rows:
+            return pattern_rows
+
+    # Strategy 5: Scanned document OCR fallback
+    try:
+        from pdf2image import convert_from_bytes
+        import pytesseract
+        images = convert_from_bytes(pdf_bytes, dpi=200, fmt="png", thread_count=1)
+        ocr_text = "\n".join(pytesseract.image_to_string(img) for img in images)
+        if ocr_text.strip():
+            text_rows = _extract_text_table_strategy(ocr_text)
+            if text_rows:
+                return text_rows
+            pattern_rows = _extract_transactions_by_pattern(ocr_text)
+            if pattern_rows:
+                return pattern_rows
     except Exception as exc:
-        raise RuntimeError(f"PDF extraction failed: {exc}") from exc
+        logger.debug("OCR fallback failed: %s", exc)
 
     if not rows:
         raise ValueError(
-            "Could not extract tabular data from PDF. "
-            "The file may be a scanned image. "
-            "Please export from your bank portal as CSV or Excel."
+            "Could not extract tabular transactions from this PDF. "
+            "Please ensure the PDF is not password-protected (or provide the password) "
+            "or export the statement as CSV/Excel from your online banking portal."
         )
 
     return rows
