@@ -410,7 +410,7 @@ def ingest_and_record_statement(
     if storefront is None:
         storefront = Storefront(
             organization_id=organization.id,
-            name="Bank Statement Switch",
+            name="Bank Statements",
             provider="bank-statement",
             store_url="https://bank-statement.internal",
             status="connected",

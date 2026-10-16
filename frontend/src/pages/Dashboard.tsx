@@ -46,7 +46,7 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [transactionTotal, setTransactionTotal] = useState(0);
 
-  // Smart Adaptive Persona Lens (Commerce vs Bank & Card Switch)
+  // Smart Adaptive Persona Lens (Commerce vs Banking & Statements)
   const [systemLens, setSystemLens] = useState<SystemLensProfile | null>(null);
   const [userLensMode, setUserLensMode] = useState<"auto" | "COMMERCE" | "BANK_NETWORK">("auto");
   const [bankRiskSummary, setBankRiskSummary] = useState<RiskAssessmentSummary | null>(null);
@@ -60,6 +60,12 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
     userLensMode === "auto"
       ? (systemLens?.recommended_lens ?? "COMMERCE")
       : userLensMode;
+
+  useEffect(() => {
+    if (activeLens === "COMMERCE" && view === "risk") {
+      setView("overview");
+    }
+  }, [activeLens, view]);
 
   useEffect(() => {
     if (view === "transactions") {
@@ -88,22 +94,20 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
         <h1>
           Commerce<br />
           <span style={{ color: activeLens === "BANK_NETWORK" ? "#c084fc" : "#60a5fa" }}>
-            {activeLens === "BANK_NETWORK" ? "Bank & Card Switch" : "Analytics MCP"}
+            {activeLens === "BANK_NETWORK" ? "Statement Analytics" : "Analytics MCP"}
           </span>
         </h1>
-        {(
-          [
-            ["overview", "Dashboard"],
-            ["transactions", "Transactions"],
-            ["risk", "Risk & Card Sentinel"],
-            ["integrations", "Integrations"],
-            ["import", "Import Studio"],
-          ] as const
-        ).map(([id, label]) => (
+        {[
+          ["overview", "Dashboard"],
+          ["transactions", "Transactions"],
+          ...(activeLens === "BANK_NETWORK" ? [["risk", "Risk Assessment"] as const] : []),
+          ["integrations", "Integrations"],
+          ["import", "Import Studio"],
+        ].map(([id, label]) => (
           <button
             className={view === id ? "nav active" : "nav"}
             key={id}
-            onClick={() => setView(id)}
+            onClick={() => setView(id as View)}
           >
             {label}
           </button>
@@ -116,15 +120,15 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
             <h1>
               {view === "overview"
                 ? activeLens === "BANK_NETWORK"
-                  ? "Bank & Card Switch Command Center"
+                  ? "Banking & Statement Analytics"
                   : "Commerce & Payment Analytics"
                 : view === "transactions"
-                  ? "Transactions Explorer"
+                  ? "Transactions"
                   : view === "risk"
-                    ? "Card Network & ATM Risk Surveillance"
+                    ? "Risk & Decline Analytics"
                     : view === "integrations"
-                      ? "Integrations Overview"
-                      : "Schema & Data Type Import Studio"}
+                      ? "Commerce Integrations"
+                      : "Data Import Studio"}
             </h1>
             <p className="lede">
               {session.organization.name} · {session.user.email}
@@ -188,7 +192,7 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
               >
                 ✨ Auto-Detect{" "}
                 {systemLens
-                  ? `(${systemLens.detected_mode === "BANK_NETWORK" ? "Bank Switch" : "Commerce"})`
+                  ? `(${systemLens.detected_mode === "BANK_NETWORK" ? "Bank Statements" : "Commerce"})`
                   : ""}
               </button>
               <button
@@ -227,7 +231,7 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
                   cursor: "pointer",
                 }}
               >
-                🏦 Bank & Card Network Switch
+                🏦 Banking &amp; Statements
               </button>
             </div>
           </div>
@@ -270,49 +274,45 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
         {view === "overview" && activeLens === "BANK_NETWORK" && (
           <>
             <p className="lede">
-              Interbank clearing switch surveillance, terminal failure monitoring, and reversal settlement reconciling.
+              Statement transaction monitoring, payment channel failure tracking, and automated reversal reconciliation.
             </p>
 
             {/* ── 6 Banking Status Cards ── */}
             <section className="grid kpis">
               <StatusCard
-                label="Interbank Settlement Vol"
+                label="Statement Volume"
                 value={`${bankRiskSummary?.currency ?? currency} ${(bankRiskSummary?.total_volume ?? 0).toFixed(2)}`}
               />
               <StatusCard
-                label="Total Switching Records"
+                label="Total Transactions"
                 value={String(bankRiskSummary?.total_transactions ?? 0)}
               />
               <StatusCard
-                label="Systemic Rail Failure Rate"
+                label="Failure Rate"
                 value={`${(bankRiskSummary?.overall_failure_rate ?? 0).toFixed(1)}%`}
               />
               <StatusCard
-                label="ATM & Terminal Failures"
+                label="Failed Transactions"
                 value={String(bankRiskSummary?.failed_transactions ?? 0)}
               />
               <StatusCard
-                label="Reconciled Reversals (RRN)"
+                label="Reconciled Reversals"
                 value={String(bankRiskSummary?.returned_transactions ?? 0)}
               />
               <StatusCard
-                label="Mastercard/Visa Sentinel"
-                value={
-                  bankRiskSummary && bankRiskSummary.overall_risk_score > 60
-                    ? "ELEVATED RISK"
-                    : "ONLINE SHIELD"
-                }
+                label="Risk Tier"
+                value={bankRiskSummary?.risk_tier ?? "NORMAL"}
               />
             </section>
 
-            {/* ── Level 1 Bank Widgets: Rail Breakdown & Reversal Health ── */}
+            {/* ── Level 1 Bank Widgets: Channel Breakdown & Reversal Health ── */}
             <section className="two-column">
               <div className="panel chart-panel">
                 <div className="chart-header">
                   <div>
-                    <h3>Switching Rails Performance</h3>
+                    <h3>Channel Breakdown</h3>
                     <p className="muted">
-                      ATM cash dispensers, UPI switches, POS card swipes, and bank transfers
+                      ATM, UPI, POS card swipe, online card, and bank transfers
                     </p>
                   </div>
                 </div>
@@ -406,7 +406,7 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
                         border: "none",
                       }}
                     >
-                      🛡️ Open Risk & Card Sentinel
+                      🛡️ View Risk Assessment
                     </button>
                     <button
                       type="button"
@@ -562,7 +562,7 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
           </>
         )}
 
-        {view === "risk" && (
+        {view === "risk" && activeLens === "BANK_NETWORK" && (
           <RiskAssessmentPanel />
         )}
 

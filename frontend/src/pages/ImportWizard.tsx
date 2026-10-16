@@ -344,7 +344,7 @@ export function ImportWizard({ storefronts, onImported }: { storefronts: Storefr
       let fileToUpload: File = file;
       const isImage = /\.(png|jpe?g|webp|bmp|tiff)$/i.test(file.name);
 
-      // Pre-transport Zero-Trust sanitization: scrubs any sensitive card/account numbers in commerce uploads
+      // Pre-upload sanitization: redacts any sensitive card/account numbers before transmission
       const { file: safeCommerceFile } = await sanitizeStatementFileBeforeUpload(fileToUpload);
       fileToUpload = safeCommerceFile;
 
@@ -570,7 +570,7 @@ export function ImportWizard({ storefronts, onImported }: { storefronts: Storefr
             fontSize: "0.85rem",
           }}
         >
-          🏦 Bank &amp; Card Network Statement Ingest (Zero-Trust PII/PCI)
+          🏦 Bank &amp; Card Statement Import
         </button>
       </div>
 
@@ -579,9 +579,9 @@ export function ImportWizard({ storefronts, onImported }: { storefronts: Storefr
           {/* Statement Ingest Progress Steps */}
           <div className="import-steps">
             {[
-              { id: "pick", label: "1. Select Statement & Encrypted PDF" },
-              { id: "preview", label: "2. Zero-Trust Masking & Preview" },
-              { id: "result", label: "3. Reversal Linking & Status" },
+              { id: "pick", label: "1. Select Statement" },
+              { id: "preview", label: "2. Preview & Sanitize" },
+              { id: "result", label: "3. Results & Status" },
             ].map((s, idx) => {
               const currentIdx = stmtPhase === "pick" ? 0 : stmtPhase === "preview" || stmtPhase === "ingesting" ? 1 : 2;
               return (
@@ -623,7 +623,7 @@ export function ImportWizard({ storefronts, onImported }: { storefronts: Storefr
                 </label>
               ) : null}
 
-              {/* Zero-Trust Client-Side Sanitization Badge */}
+              {/* Privacy Sanitization Status */}
               <div
                 style={{
                   padding: "0.85rem 1rem",
@@ -639,13 +639,13 @@ export function ImportWizard({ storefronts, onImported }: { storefronts: Storefr
               >
                 <span style={{ fontSize: "1.2rem" }}>🔒</span>
                 <div>
-                  <strong>Zero-Trust Pre-Transport Sanitization Active (PCI-DSS 3.4):</strong>
+                  <strong>Sensitive Data Auto-Redacted</strong>
                   <div style={{ fontSize: "0.78rem", marginTop: "0.2rem", color: "#cbd5e1" }}>
                     {stmtSanitizing
-                      ? "Scanning and scrubbing sensitive cardholder data in browser..."
+                      ? "Scanning for sensitive data in your browser…"
                       : stmtSanitizationCount > 0
-                        ? `Scrubbed ${stmtSanitizationCount} personal details (16-digit Card PANs, Bank Accounts, Aadhaar, CVVs, Phones, Emails) in your browser BEFORE transmission to backend. Reference numbers (RRN/UTR) preserved.`
-                        : "All 16-digit card numbers, account numbers, and Aadhaar IDs are automatically redacted client-side before transport."}
+                        ? `Redacted ${stmtSanitizationCount} sensitive fields (card numbers, account numbers, Aadhaar, CVV, phone, email) locally before upload. Reference numbers (RRN/UTR) are preserved.`
+                        : "Card numbers, account numbers, and personal identifiers are automatically redacted before upload."}
                   </div>
                 </div>
               </div>
@@ -697,8 +697,8 @@ export function ImportWizard({ storefronts, onImported }: { storefronts: Storefr
                   disabled={stmtPhase === "ingesting" || !stmtFile || stmtSanitizing}
                 >
                   {stmtPhase === "ingesting"
-                    ? "Ingesting & Linking Reversals..."
-                    : "Ingest Statement & Reconcile Reversals"}
+                    ? "Importing & Linking Reversals…"
+                    : "Import Statement"}
                 </button>
                 {stmtFile ? (
                   <button type="button" onClick={onResetStatement}>
@@ -712,10 +712,10 @@ export function ImportWizard({ storefronts, onImported }: { storefronts: Storefr
             <div style={{ padding: "1.5rem", background: "rgba(59, 130, 246, 0.12)", borderRadius: "10px", border: "1px solid rgba(59, 130, 246, 0.3)" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", color: "#93c5fd", fontSize: "1.1rem", fontWeight: 700 }}>
                 <span>✅</span>
-                <span>Bank Statement Ingested &amp; Reconciled ({stmtResult?.format_detected})</span>
+                <span>Statement Imported Successfully ({stmtResult?.format_detected})</span>
               </div>
               <p style={{ margin: "0.4rem 0 1rem", fontSize: "0.85rem", color: "#cbd5e1" }}>
-                All transactions were normalized, card/account PII was masked, and debit-credit reversal links were atomically established.
+                Transactions were normalized, sensitive data redacted, and reversals automatically linked.
               </p>
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "1rem", marginTop: "1rem" }}>
@@ -730,7 +730,7 @@ export function ImportWizard({ storefronts, onImported }: { storefronts: Storefr
                   <div style={{ fontSize: "1.6rem", fontWeight: 800, color: "#38bdf8", marginTop: "0.25rem" }}>
                     {stmtResult?.reversals_linked}
                   </div>
-                  <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginTop: "0.2rem" }}>Prior debits transitioned to failed</div>
+                  <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginTop: "0.2rem" }}>Matched to original debits</div>
                 </div>
                 <div style={{ background: "rgba(0,0,0,0.25)", padding: "1rem", borderRadius: "8px" }}>
                   <div style={{ fontSize: "0.75rem", color: "#94a3b8" }}>TOTAL DEBITS</div>
@@ -748,7 +748,7 @@ export function ImportWizard({ storefronts, onImported }: { storefronts: Storefr
 
               <div style={{ display: "flex", gap: "1rem", marginTop: "1.5rem" }}>
                 <button type="button" className="primary" onClick={onResetStatement}>
-                  Ingest Another Bank Statement
+                  Import Another Statement
                 </button>
               </div>
             </div>

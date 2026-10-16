@@ -11,6 +11,9 @@ psycopg[binary]>=3.2.0
 mcp>=2.2.0
 openpyxl>=3.1.0
 pypdf>=5.0.0
+pdfplumber>=0.11.0
+pikepdf>=8.0.0
+xlrd>=2.0.1
 # Optional scanned-PDF OCR path. The host also needs Tesseract and Poppler.
 pdf2image>=1.17.0
 pytesseract>=0.3.13

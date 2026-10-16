@@ -438,8 +438,8 @@ class RiskAssessmentService:
             confidence = min(0.98, 0.70 + (min(bank_tx_count, 100) / 100.0) * 0.28)
             rail_str = ", ".join(active_rails) if active_rails else "SWITCH"
             rationale = (
-                f"Auto-detected Bank & Card Network Switch persona: {bank_tx_count} bank/card statement transactions "
-                f"detected across rails [{rail_str}] with no active e-commerce storefront orders."
+                f"Auto-detected Banking & Statement Analytics persona: {bank_tx_count} bank/card statement transactions "
+                f"detected across channels [{rail_str}] with no active e-commerce storefront orders."
             )
         elif commerce_orders_count > 0 and bank_tx_count == 0:
             detected_mode = "COMMERCE"
@@ -447,7 +447,7 @@ class RiskAssessmentService:
             confidence = min(0.98, 0.70 + (min(commerce_orders_count, 100) / 100.0) * 0.28)
             rationale = (
                 f"Auto-detected Commerce Analytics persona: {commerce_orders_count} storefront purchase orders "
-                f"and cart checkout events detected with no interbank statement feeds."
+                f"and checkout events detected with no bank statement feeds."
             )
         elif bank_tx_count > 0 and commerce_orders_count > 0:
             detected_mode = "HYBRID"
@@ -455,15 +455,15 @@ class RiskAssessmentService:
                 recommended_lens = "BANK_NETWORK"
                 confidence = round(bank_tx_count / (bank_tx_count + commerce_orders_count), 2)
                 rationale = (
-                    f"Hybrid workspace detected ({bank_tx_count} bank rail transactions vs {commerce_orders_count} commerce orders). "
-                    f"Recommending Bank & Card Switch Sentinel as dominant lens."
+                    f"Hybrid workspace detected ({bank_tx_count} bank statement transactions vs {commerce_orders_count} commerce orders). "
+                    f"Recommending Banking & Statement Analytics as primary view."
                 )
             else:
                 recommended_lens = "COMMERCE"
                 confidence = round(commerce_orders_count / (bank_tx_count + commerce_orders_count), 2)
                 rationale = (
-                    f"Hybrid workspace detected ({commerce_orders_count} commerce orders vs {bank_tx_count} bank switch transactions). "
-                    f"Recommending Commerce Analytics as dominant lens."
+                    f"Hybrid workspace detected ({commerce_orders_count} commerce orders vs {bank_tx_count} bank statement transactions). "
+                    f"Recommending Commerce Analytics as primary view."
                 )
         else:
             detected_mode = "COMMERCE"

@@ -82,7 +82,7 @@ export function RiskAssessmentPanel() {
       const dna = await fetchEntityRiskDNA(entityName);
       setSelectedDNA(dna);
     } catch (err) {
-      alert(`Could not load Decline DNA: ${err instanceof Error ? err.message : String(err)}`);
+      alert(`Could not load risk profile: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setLoadingDNA(false);
     }
@@ -126,10 +126,10 @@ export function RiskAssessmentPanel() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem" }}>
         <div>
           <h2 style={{ margin: 0, fontSize: "1.5rem", fontWeight: 700, color: "var(--foreground, #fff)" }}>
-            Card Network, ATM & UPI Risk Sentinel
+            Risk Assessment &amp; Decline Analytics
           </h2>
           <p style={{ margin: "0.25rem 0 0", color: "#94a3b8", fontSize: "0.9rem" }}>
-            Real-time decline surveillance, phantom reversal correlation, and merchant Decline DNA.
+            Payment decline telemetry, channel failure tracking, and merchant risk profiles.
           </p>
         </div>
 
@@ -247,10 +247,10 @@ export function RiskAssessmentPanel() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
             <div>
               <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700 }}>
-                Most Failed Transactions at Which Name
+                Decline &amp; Failure Rates by Merchant / Terminal
               </h3>
               <p style={{ margin: "0.2rem 0 0", color: "#94a3b8", fontSize: "0.82rem" }}>
-                Ranked by failure count, reversed volume, and composite risk index.
+                Ranked by failure count, returned volume, and risk index.
               </p>
             </div>
             <button
@@ -277,12 +277,12 @@ export function RiskAssessmentPanel() {
                 <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", color: "#94a3b8" }}>
                   <th style={{ padding: "0.6rem 0.5rem" }}>Rank</th>
                   <th style={{ padding: "0.6rem 0.5rem" }}>Entity / Merchant / ATM</th>
-                  <th style={{ padding: "0.6rem 0.5rem" }}>Rail</th>
+                  <th style={{ padding: "0.6rem 0.5rem" }}>Channel</th>
                   <th style={{ padding: "0.6rem 0.5rem", textAlign: "right" }}>Attempts</th>
                   <th style={{ padding: "0.6rem 0.5rem", textAlign: "right" }}>Failed / Rev</th>
                   <th style={{ padding: "0.6rem 0.5rem", textAlign: "right" }}>Fail Rate</th>
                   <th style={{ padding: "0.6rem 0.5rem", textAlign: "center" }}>Risk Tier</th>
-                  <th style={{ padding: "0.6rem 0.5rem", textAlign: "center" }}>Decline DNA</th>
+                  <th style={{ padding: "0.6rem 0.5rem", textAlign: "center" }}>Risk Profile</th>
                 </tr>
               </thead>
               <tbody>
@@ -359,7 +359,7 @@ export function RiskAssessmentPanel() {
                             cursor: "pointer",
                           }}
                         >
-                          Inspect DNA
+                          Inspect Profile
                         </button>
                       </td>
                     </tr>
@@ -370,13 +370,13 @@ export function RiskAssessmentPanel() {
           </div>
         </div>
 
-        {/* Real-Time Card Network Integration Middleware Simulator */}
+        {/* Real-Time Risk Evaluation Simulator */}
         <div className="panel" style={{ padding: "1.25rem", borderRadius: "10px", background: "var(--card-bg, #1e293b)" }}>
           <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700 }}>
-            Card Network Middleware Simulator
+            Transaction Risk Evaluation Simulator
           </h3>
           <p style={{ margin: "0.25rem 0 1rem", color: "#94a3b8", fontSize: "0.82rem" }}>
-            Pipeline: <code>Mastercard ➔ SaaS MCP ➔ Bank</code>
+            Endpoint: <code>POST /api/risk/evaluate</code>
           </p>
 
           <form onSubmit={handleSimulateEvaluation} style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
@@ -511,7 +511,7 @@ export function RiskAssessmentPanel() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "0.75rem" }}>
               <div>
                 <h3 style={{ margin: 0, fontSize: "1.25rem", color: "#fff" }}>
-                  Decline DNA: {selectedDNA.entity_name}
+                  Risk Profile: {selectedDNA.entity_name}
                 </h3>
                 <span style={{ fontSize: "0.75rem", color: "#60a5fa" }}>Cross-Rail Commerce Telemetry</span>
               </div>
@@ -617,7 +617,7 @@ export function RiskAssessmentPanel() {
             </div>
 
             <div style={{ margin: "1rem 0", padding: "0.75rem", background: "rgba(16, 185, 129, 0.1)", border: "1px solid rgba(16, 185, 129, 0.25)", borderRadius: "6px", fontSize: "0.78rem", color: "#6ee7b7" }}>
-              🔒 <strong>Zero-Trust Sanitization Active:</strong> Account numbers, Card PANs (16-digits), Aadhaar, CVV, and mobile numbers are automatically redacted before storage (PCI-DSS 3.4).
+              🔒 <strong>Privacy Protection Active:</strong> Account numbers, card numbers, Aadhaar, CVV, and mobile numbers are automatically redacted before processing.
             </div>
 
             {uploadError ? (

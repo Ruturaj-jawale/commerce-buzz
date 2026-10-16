@@ -1,5 +1,5 @@
 /**
- * Client-Side Zero-Trust PII & PCI Sanitization Engine
+ * Client-Side PII & PCI Sanitization Engine
  * 
  * Removes and masks sensitive cardholder data and banking identifiers in the browser
  * BEFORE file transmission to the backend, fulfilling PCI-DSS 3.4 and privacy guardrails.
