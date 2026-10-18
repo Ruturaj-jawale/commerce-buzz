@@ -223,3 +223,84 @@ def test_ingest_statement_file_mcp_tool():
             Path(temp_path).unlink(missing_ok=True)
     finally:
         db.close()
+
+
+def test_ingest_statement_with_bank_preset_and_custom_headers():
+    headers, org_id = _create_tenant()
+    db = SessionLocal()
+    try:
+        org = db.get(Organization, org_id)
+
+        # IPPB format: DATE, TRAN ID, TRANSACTION PARTICULARS, WITHDRWAL, DEPOSIT, BALANCE
+        ippb_csv = (
+            "DATE,TRAN ID,TRANSACTION PARTICULARS,WITHDRWAL,DEPOSIT,BALANCE\n"
+            "17-08-2026,S79045856,UPI~622999096870~CR~Ruturaj,,650.00,873.00\n"
+            "18-08-2026,S17829476,UPI~104884675612~DR~RUTURAJ,500.00,,373.00\n"
+        ).encode("utf-8")
+
+        rows, res = ingest_bank_statement(
+            content=ippb_csv,
+            filename="ippb_statement.csv",
+            organization_id=org_id,
+            bank_preset="ippb",
+        )
+        assert len(rows) == 2
+        assert rows[0].amount == 650.0
+        assert rows[0].direction == "CREDIT"
+        assert rows[1].amount == 500.0
+        assert rows[1].direction == "DEBIT"
+
+        # Custom headers test
+        custom_csv = (
+            "TxDate,CustomNotes,PaidOut,ReceivedIn,RemainingBal\n"
+            "2026-09-01,Supplier Payout,250.00,,9750.00\n"
+            "2026-09-02,Client Deposit,,1200.00,10950.00\n"
+        ).encode("utf-8")
+
+        custom_mapping = {
+            "date": "TxDate",
+            "narration": "CustomNotes",
+            "debit": "PaidOut",
+            "credit": "ReceivedIn",
+            "balance": "RemainingBal",
+        }
+
+        report = ingest_and_record_statement(
+            db=db,
+            organization=org,
+            content=custom_csv,
+            filename="custom_bank_export.csv",
+            custom_headers=custom_mapping,
+        )
+        assert report.rows_parsed == 2
+        assert report.rows_ingested == 2
+        assert report.total_debit_amount == 250.0
+        assert report.total_credit_amount == 1200.0
+    finally:
+        db.close()
+
+
+def test_upload_statement_api_with_bank_preset_and_custom_headers():
+    headers, org_id = _create_tenant()
+
+    csv_data = (
+        "Date,Transaction Reference,Debit,Credit,Balance,Ref.No./Chq.No.\n"
+        "2026-08-10,UPI/Transfer/Dinner,350.00,,4650.00,UPI1234567890\n"
+    ).encode("utf-8")
+
+    import json
+    res = client.post(
+        "/api/risk/statements/upload",
+        files={"file": ("sbi_stmt.csv", csv_data, "text/csv")},
+        data={
+            "bank_preset": "sbi",
+            "custom_headers": json.dumps({"narration": "Transaction Reference"}),
+        },
+        headers=headers,
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["rows_parsed"] == 1
+    assert data["rows_ingested"] == 1
+    assert data["total_debit_amount"] == 350.0
+

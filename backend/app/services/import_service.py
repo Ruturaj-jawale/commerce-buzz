@@ -3,6 +3,7 @@
 import csv
 import io
 import json
+import re
 from datetime import date, datetime
 from typing import Any
 
@@ -232,14 +233,54 @@ def _stringify(value: Any) -> str:
     return str(value)
 
 
+_COMMON_IMPORT_KEYWORDS = {
+    "date", "time", "id", "name", "amount", "revenue", "total", "price",
+    "status", "txn", "trans", "particular", "particulars", "narration",
+    "debit", "credit", "withdrwal", "withdrawal", "deposit", "balance",
+    "ref", "reference", "customer", "email", "order", "currency", "fee",
+    "category", "sku", "quantity", "qty", "item"
+}
+
+
+def _find_candidate_header(rows: list[Any], max_scan: int = 35) -> int:
+    """Find the best row to treat as the header among the top rows."""
+    if not rows:
+        return 0
+    best_idx = 0
+    best_score = -1
+    for i, r in enumerate(rows[:max_scan]):
+        if not r:
+            continue
+        vals = [str(c).strip() for c in r if c is not None and str(c).strip()]
+        if len(vals) < 2:
+            continue
+        keyword_matches = sum(
+            1 for v in vals
+            if any(kw in re.sub(r"[^a-zA-Z0-9]", "", v.lower()) for kw in _COMMON_IMPORT_KEYWORDS)
+        )
+        score = keyword_matches * 10 + min(len(vals), 10)
+        if score > best_score:
+            best_score = score
+            best_idx = i
+    return best_idx
+
+
 def _parse_csv(content: bytes) -> tuple[list[str], list[dict[str, str]]]:
     try:
         text = content.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise HTTPException(status_code=422, detail="The CSV file must be UTF-8 encoded") from exc
-    reader = csv.DictReader(io.StringIO(text))
-    columns = [str(column).strip() for column in (reader.fieldnames or [])]
-    rows = [{key.strip(): _stringify(value) for key, value in row.items() if key is not None} for row in reader]
+    raw_lines = list(csv.reader(io.StringIO(text)))
+    if not raw_lines:
+        return [], []
+    header_idx = _find_candidate_header(raw_lines)
+    columns = [str(column).strip() for column in raw_lines[header_idx]]
+    columns = [column or f"Column {index + 1}" for index, column in enumerate(columns)]
+    rows = []
+    for line in raw_lines[header_idx + 1:]:
+        if not any(str(c).strip() for c in line):
+            continue
+        rows.append({columns[i]: str(line[i]).strip() if i < len(line) else "" for i in range(len(columns))})
     return columns, rows
 
 
@@ -249,7 +290,9 @@ def _parse_xlsx(content: bytes) -> tuple[list[str], list[dict[str, str]]]:
     except ImportError as exc:  # pragma: no cover - dependency installed via requirements
         raise HTTPException(status_code=422, detail="Excel support is not installed on this server") from exc
     try:
-        workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        # We explicitly use read_only=False because banking exports often omit sheet dimension XML,
+        # which causes openpyxl read_only=True to terminate prematurely after the first row.
+        workbook = load_workbook(io.BytesIO(content), read_only=False, data_only=True)
         sheet = workbook.worksheets[0]
         lines = list(sheet.iter_rows(values_only=True))
         workbook.close()
@@ -257,19 +300,17 @@ def _parse_xlsx(content: bytes) -> tuple[list[str], list[dict[str, str]]]:
         raise HTTPException(status_code=422, detail="The Excel file could not be parsed") from exc
     if not lines:
         return [], []
-    columns = [_stringify(value).strip() for value in lines[0]]
+    header_idx = _find_candidate_header(lines)
+    columns = [_stringify(value).strip() for value in lines[header_idx]]
     columns = [column or f"Column {index + 1}" for index, column in enumerate(columns)]
     rows: list[dict[str, str]] = []
-    for line in lines[1:]:
+    for line in lines[header_idx + 1:]:
         values = [_stringify(value) for value in line]
         if not any(value.strip() for value in values):
             continue
         row = {columns[index]: values[index] if index < len(values) else "" for index in range(len(columns))}
         rows.append(row)
     return columns, rows
-
-
-import re
 
 
 def _parse_pdf(content: bytes) -> tuple[list[str], list[dict[str, str]]]:

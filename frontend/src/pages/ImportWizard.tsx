@@ -222,9 +222,88 @@ export function ImportWizard({ storefronts, onImported }: { storefronts: Storefr
   // Studio mode: commerce orders vs bank & card statement
   const [studioMode, setStudioMode] = useState<"commerce" | "bank_statement">("commerce");
 
+  const BANK_HEADER_PRESETS: Record<
+    string,
+    { name: string; headers: { date: string; narration: string; debit: string; credit: string; balance: string; reference: string } }
+  > = {
+    auto: {
+      name: "Auto-Detect Bank (Recommended)",
+      headers: { date: "", narration: "", debit: "", credit: "", balance: "", reference: "" },
+    },
+    sbi: {
+      name: "State Bank of India (SBI)",
+      headers: {
+        date: "Date",
+        narration: "Transaction Reference",
+        debit: "Debit",
+        credit: "Credit",
+        balance: "Balance",
+        reference: "Ref.No./Chq.No.",
+      },
+    },
+    ippb: {
+      name: "India Post Payments Bank (IPPB)",
+      headers: {
+        date: "DATE",
+        narration: "TRANSACTION PARTICULARS",
+        debit: "WITHDRWAL",
+        credit: "DEPOSIT",
+        balance: "BALANCE",
+        reference: "TRAN ID",
+      },
+    },
+    hdfc: {
+      name: "HDFC Bank",
+      headers: {
+        date: "Date",
+        narration: "Narration",
+        debit: "Withdrawal Amt.",
+        credit: "Deposit Amt.",
+        balance: "Closing Balance",
+        reference: "Chq./Ref.No.",
+      },
+    },
+    icici: {
+      name: "ICICI Bank",
+      headers: {
+        date: "Transaction Date",
+        narration: "Transaction Details",
+        debit: "Debit",
+        credit: "Credit",
+        balance: "Balance",
+        reference: "Cheque Number",
+      },
+    },
+    axis: {
+      name: "Axis Bank",
+      headers: {
+        date: "Tran Date",
+        narration: "PARTICULARS",
+        debit: "DR",
+        credit: "CR",
+        balance: "BAL",
+        reference: "CHQNO",
+      },
+    },
+    custom: {
+      name: "Custom Column Mapping",
+      headers: { date: "", narration: "", debit: "", credit: "", balance: "", reference: "" },
+    },
+  };
+
   // Bank statement studio state
   const [stmtFile, setStmtFile] = useState<File | null>(null);
   const [stmtPassword, setStmtPassword] = useState<string>("");
+  const [bankPreset, setBankPreset] = useState<string>("auto");
+  const [showCustomHeaders, setShowCustomHeaders] = useState<boolean>(false);
+  const [customHeaders, setCustomHeaders] = useState({
+    date: "",
+    narration: "",
+    debit: "",
+    credit: "",
+    balance: "",
+    reference: "",
+  });
   const [stmtSanitizing, setStmtSanitizing] = useState<boolean>(false);
   const [stmtSanitizationCount, setStmtSanitizationCount] = useState<number>(0);
   const [stmtPreviewRows, setStmtPreviewRows] = useState<Array<Record<string, string>>>([]);
@@ -250,10 +329,26 @@ export function ImportWizard({ storefronts, onImported }: { storefronts: Storefr
       setStmtSanitizationCount(count);
       if (format === "CSV" || f.name.toLowerCase().endsWith(".csv") || f.name.toLowerCase().endsWith(".txt")) {
         const text = await safeFile.text();
-        const lines = text.split("\n").filter((l) => l.trim().length > 0);
-        if (lines.length > 0) {
-          const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
-          const rows = lines.slice(1, 11).map((line) => {
+        const rawLines = text.split("\n").filter((l) => l.trim().length > 0);
+        if (rawLines.length > 0) {
+          // Detect candidate header line by scanning initial rows for column keywords
+          let headerIdx = 0;
+          let bestScore = -1;
+          for (let i = 0; i < Math.min(rawLines.length, 35); i++) {
+            const cols = rawLines[i].split(",").map((c) => c.trim().replace(/^"|"$/g, "")).filter(Boolean);
+            if (cols.length >= 2) {
+              const kwMatches = cols.filter((c) =>
+                /date|time|particular|narrat|withdr|deposit|debit|credit|bal|ref|tran/i.test(c)
+              ).length;
+              const score = kwMatches * 10 + Math.min(cols.length, 10);
+              if (score > bestScore) {
+                bestScore = score;
+                headerIdx = i;
+              }
+            }
+          }
+          const headers = rawLines[headerIdx].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
+          const rows = rawLines.slice(headerIdx + 1, headerIdx + 11).map((line) => {
             const vals = line.split(",").map((v) => v.trim().replace(/^"|"$/g, ""));
             const obj: Record<string, string> = {};
             headers.forEach((h, idx) => {
@@ -281,7 +376,9 @@ export function ImportWizard({ storefronts, onImported }: { storefronts: Storefr
     setStmtPhase("ingesting");
     setStmtError(null);
     try {
-      const res = await uploadStatementFile(stmtFile, stmtPassword || undefined);
+      const hasNonEmptyCustom = Object.values(customHeaders).some((v) => v.trim().length > 0);
+      const activeHeaders = bankPreset === "custom" || showCustomHeaders || hasNonEmptyCustom ? customHeaders : undefined;
+      const res = await uploadStatementFile(stmtFile, stmtPassword || undefined, bankPreset, activeHeaders);
       setStmtResult(res);
       setStmtPhase("result");
       onImported();
@@ -622,6 +719,154 @@ export function ImportWizard({ storefronts, onImported }: { storefronts: Storefr
                   />
                 </label>
               ) : null}
+
+              {/* Bank Format Template & Custom Column Headers */}
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.75rem",
+                  padding: "0.85rem 1rem",
+                  background: "rgba(255, 255, 255, 0.03)",
+                  border: "1px solid rgba(255, 255, 255, 0.1)",
+                  borderRadius: "8px",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
+                  <label style={{ margin: 0, fontWeight: 600, fontSize: "0.88rem" }}>
+                    Bank Statement Format / Template
+                    <select
+                      value={bankPreset}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setBankPreset(val);
+                        if (val in BANK_HEADER_PRESETS && val !== "auto") {
+                          setCustomHeaders({ ...BANK_HEADER_PRESETS[val].headers });
+                          if (val === "custom") {
+                            setShowCustomHeaders(true);
+                          }
+                        }
+                      }}
+                      style={{
+                        display: "block",
+                        marginTop: "0.35rem",
+                        padding: "0.45rem 0.75rem",
+                        background: "rgba(15, 23, 42, 0.8)",
+                        border: "1px solid rgba(255, 255, 255, 0.2)",
+                        borderRadius: "6px",
+                        color: "#fff",
+                        fontSize: "0.85rem",
+                        minWidth: "260px",
+                      }}
+                    >
+                      {Object.entries(BANK_HEADER_PRESETS).map(([key, item]) => (
+                        <option key={key} value={key} style={{ background: "#1e293b", color: "#fff" }}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowCustomHeaders(!showCustomHeaders)}
+                    style={{
+                      background: "transparent",
+                      border: "1px dashed rgba(255, 255, 255, 0.25)",
+                      borderRadius: "6px",
+                      color: "#93c5fd",
+                      padding: "0.35rem 0.75rem",
+                      fontSize: "0.78rem",
+                      cursor: "pointer",
+                      alignSelf: "flex-end",
+                    }}
+                  >
+                    {showCustomHeaders ? "▲ Hide Column Mapping" : "⚙ Custom Column Mapping"}
+                  </button>
+                </div>
+
+                {showCustomHeaders && (
+                  <div
+                    style={{
+                      marginTop: "0.5rem",
+                      paddingTop: "0.75rem",
+                      borderTop: "1px solid rgba(255, 255, 255, 0.08)",
+                    }}
+                  >
+                    <div style={{ fontSize: "0.78rem", color: "#94a3b8", marginBottom: "0.6rem" }}>
+                      Specify the column header names matching your bank statement table:
+                    </div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+                        gap: "0.65rem",
+                      }}
+                    >
+                      <label style={{ margin: 0, fontSize: "0.78rem", color: "#cbd5e1" }}>
+                        Date Column
+                        <input
+                          type="text"
+                          placeholder="e.g. Date or Tran Date"
+                          value={customHeaders.date}
+                          onChange={(e) => setCustomHeaders({ ...customHeaders, date: e.target.value })}
+                          style={{ marginTop: "0.25rem", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
+                        />
+                      </label>
+                      <label style={{ margin: 0, fontSize: "0.78rem", color: "#cbd5e1" }}>
+                        Narration / Particulars
+                        <input
+                          type="text"
+                          placeholder="e.g. Particulars / Narration"
+                          value={customHeaders.narration}
+                          onChange={(e) => setCustomHeaders({ ...customHeaders, narration: e.target.value })}
+                          style={{ marginTop: "0.25rem", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
+                        />
+                      </label>
+                      <label style={{ margin: 0, fontSize: "0.78rem", color: "#cbd5e1" }}>
+                        Withdrawal / Debit
+                        <input
+                          type="text"
+                          placeholder="e.g. Debit / Withdrawal"
+                          value={customHeaders.debit}
+                          onChange={(e) => setCustomHeaders({ ...customHeaders, debit: e.target.value })}
+                          style={{ marginTop: "0.25rem", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
+                        />
+                      </label>
+                      <label style={{ margin: 0, fontSize: "0.78rem", color: "#cbd5e1" }}>
+                        Deposit / Credit
+                        <input
+                          type="text"
+                          placeholder="e.g. Credit / Deposit"
+                          value={customHeaders.credit}
+                          onChange={(e) => setCustomHeaders({ ...customHeaders, credit: e.target.value })}
+                          style={{ marginTop: "0.25rem", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
+                        />
+                      </label>
+                      <label style={{ margin: 0, fontSize: "0.78rem", color: "#cbd5e1" }}>
+                        Closing Balance
+                        <input
+                          type="text"
+                          placeholder="e.g. Balance"
+                          value={customHeaders.balance}
+                          onChange={(e) => setCustomHeaders({ ...customHeaders, balance: e.target.value })}
+                          style={{ marginTop: "0.25rem", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
+                        />
+                      </label>
+                      <label style={{ margin: 0, fontSize: "0.78rem", color: "#cbd5e1" }}>
+                        Ref / Cheque / UTR
+                        <input
+                          type="text"
+                          placeholder="e.g. Ref.No./Chq.No. or Tran ID"
+                          value={customHeaders.reference}
+                          onChange={(e) => setCustomHeaders({ ...customHeaders, reference: e.target.value })}
+                          style={{ marginTop: "0.25rem", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* Privacy Sanitization Status */}
               <div

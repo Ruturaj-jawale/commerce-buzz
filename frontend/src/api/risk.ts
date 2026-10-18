@@ -138,10 +138,19 @@ export interface StatementIngestionResponse {
   errors: string[];
 }
 
-export async function uploadStatementFile(file: File, password?: string): Promise<StatementIngestionResponse> {
+export async function uploadStatementFile(
+  file: File,
+  password?: string,
+  bankPreset?: string,
+  customHeaders?: Record<string, string>
+): Promise<StatementIngestionResponse> {
   const { file: safeFile } = await sanitizeStatementFileBeforeUpload(file);
   const fields: Record<string, string> = {};
   if (password) fields.password = password;
+  if (bankPreset && bankPreset !== "auto") fields.bank_preset = bankPreset;
+  if (customHeaders && Object.keys(customHeaders).length > 0) {
+    fields.custom_headers = JSON.stringify(customHeaders);
+  }
   return uploadFile<StatementIngestionResponse>("/api/analytics/statements/upload", safeFile, fields);
 }
 

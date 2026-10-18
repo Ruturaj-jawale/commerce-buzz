@@ -1,6 +1,7 @@
 """Card network risk assessment, entity failure analytics, and real-time decisioning routes."""
 
 from datetime import date
+import json
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from sqlalchemy.orm import Session
 
@@ -86,9 +87,12 @@ def evaluate_realtime_risk(
 
 
 @router.post("/api/analytics/statements/upload", response_model=StatementIngestionResponse)
+@router.post("/api/risk/statements/upload", response_model=StatementIngestionResponse)
 async def upload_statement(
     file: UploadFile = File(...),
     password: str | None = Form(default=None),
+    bank_preset: str | None = Form(default=None),
+    custom_headers: str | None = Form(default=None),
     organization: Organization = Depends(get_current_organization),
     db: Session = Depends(get_db),
 ) -> StatementIngestionResponse:
@@ -97,10 +101,19 @@ async def upload_statement(
     and atomically reconciles debit-credit reversals.
     """
     content = await file.read()
+    headers_dict = None
+    if custom_headers:
+        try:
+            headers_dict = json.loads(custom_headers)
+        except Exception:
+            pass
+
     return ingest_and_record_statement(
         db=db,
         organization=organization,
         content=content,
         filename=file.filename or "statement.csv",
         pdf_password=password,
+        bank_preset=bank_preset,
+        custom_headers=headers_dict,
     )

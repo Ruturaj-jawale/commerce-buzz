@@ -20,7 +20,7 @@ import io
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import HTTPException
@@ -77,18 +77,61 @@ class IngestionResult:
 # ---------------------------------------------------------------------------
 
 _DATE_ALIASES   = {"date", "txndate", "valuedate", "postingdate", "transactiondate",
-                   "datetime", "statementdate", "created", "occurredat"}
-_NARR_ALIASES   = {"narration", "particulars", "description", "remarks", "transactiondetails",
-                   "merchant", "merchantname", "details", "txndescription"}
-_DEBIT_ALIASES  = {"debit", "dr", "withdrawal", "debitamount", "withdrawalamount",
+                   "datetime", "statementdate", "created", "occurredat", "transdate"}
+_NARR_ALIASES   = {"narration", "particulars", "particular", "description", "remarks", "transactiondetails",
+                   "transactionparticulars", "txnparticulars", "merchant", "merchantname", "details", "txndescription"}
+_DEBIT_ALIASES  = {"debit", "dr", "withdrawal", "withdrawals", "withdrwal", "withdrwals", "debitamount", "withdrawalamount",
                    "dramt", "debitamt", "wdl"}
-_CREDIT_ALIASES = {"credit", "cr", "deposit", "creditamount", "depositamount",
+_CREDIT_ALIASES = {"credit", "cr", "deposit", "deposits", "creditamount", "depositamount",
                    "cramt", "creditamt"}
 _AMT_ALIASES    = {"amount", "txnamount", "transactionamount", "amt", "totalamount"}
 _BAL_ALIASES    = {"balance", "closingbalance", "runningbalance", "availablebalance",
                    "bal", "closingbal"}
 _REF_ALIASES    = {"rrn", "utr", "refno", "referenceno", "chequeno", "chqno",
-                   "authcode", "txnid", "transactionid", "reference", "referencenum"}
+                   "authcode", "txnid", "tranid", "transactionid", "reference", "referencenum"}
+
+BANK_PRESETS: dict[str, dict[str, str]] = {
+    "sbi": {
+        "date": "Date",
+        "narration": "Transaction Reference",
+        "reference": "Ref.No./Chq.No.",
+        "credit": "Credit",
+        "debit": "Debit",
+        "balance": "Balance",
+    },
+    "ippb": {
+        "date": "DATE",
+        "reference": "TRAN ID",
+        "narration": "TRANSACTION PARTICULARS",
+        "debit": "WITHDRWAL",
+        "credit": "DEPOSIT",
+        "balance": "BALANCE",
+    },
+    "hdfc": {
+        "date": "Date",
+        "narration": "Narration",
+        "reference": "Chq./Ref.No.",
+        "debit": "Withdrawal Amt.",
+        "credit": "Deposit Amt.",
+        "balance": "Closing Balance",
+    },
+    "icici": {
+        "date": "Transaction Date",
+        "narration": "Transaction Details",
+        "reference": "Cheque Number",
+        "debit": "Debit",
+        "credit": "Credit",
+        "balance": "Balance",
+    },
+    "axis": {
+        "date": "Tran Date",
+        "reference": "CHQNO",
+        "narration": "PARTICULARS",
+        "debit": "DR",
+        "credit": "CR",
+        "balance": "BAL",
+    },
+}
 
 
 def _norm(col: str) -> str:
@@ -99,47 +142,107 @@ def _detect_columns(headers: list[str]) -> dict[str, str]:
     """Map semantic role -> actual column name."""
     mapping: dict[str, str] = {}
     for h in headers:
+        if not h:
+            continue
         n = _norm(h)
-        if n in _DATE_ALIASES and "date" not in mapping:
+        if not n:
+            continue
+        if (n in _DATE_ALIASES or "txndate" in n or "date" in n) and "date" not in mapping:
             mapping["date"] = h
-        elif n in _NARR_ALIASES and "narration" not in mapping:
+        elif (n in _NARR_ALIASES or "particular" in n or "narrat" in n or "desc" in n) and "narration" not in mapping:
             mapping["narration"] = h
-        elif n in _DEBIT_ALIASES and "debit" not in mapping:
+        elif (n in _DEBIT_ALIASES or "withdr" in n or n == "dr") and "debit" not in mapping:
             mapping["debit"] = h
-        elif n in _CREDIT_ALIASES and "credit" not in mapping:
+        elif (n in _CREDIT_ALIASES or "deposit" in n or n == "cr") and "credit" not in mapping:
             mapping["credit"] = h
-        elif n in _AMT_ALIASES and "amount" not in mapping:
+        elif (n in _AMT_ALIASES or "amount" in n) and "amount" not in mapping:
             mapping["amount"] = h
-        elif n in _BAL_ALIASES and "balance" not in mapping:
+        elif (n in _BAL_ALIASES or "balance" in n or n == "bal") and "balance" not in mapping:
             mapping["balance"] = h
-        elif n in _REF_ALIASES and "reference" not in mapping:
+        elif (n in _REF_ALIASES or "tranid" in n or "txnid" in n or "rrn" in n or "utr" in n or "chq" in n) and "reference" not in mapping:
             mapping["reference"] = h
+
+    # If "Transaction Reference" is in headers and narration wasn't detected, map it to narration
+    # (common in SBI statements where Transaction Reference holds the UPI/ATM details)
+    if "narration" not in mapping:
+        for h in headers:
+            if "transaction" in h.lower() and "reference" in h.lower():
+                mapping["narration"] = h
+                if mapping.get("reference") == h:
+                    del mapping["reference"]
+                break
+
     return mapping
 
 
 def _parse_amount(val: Any) -> float:
-    if val is None or str(val).strip() in ("", "-", "—"):
+    if val is None:
         return 0.0
-    return float(str(val).replace(",", "").replace("₹", "").replace("$", "").strip())
+    s = str(val).strip()
+    if s in ("", "-", "—", "None", "null", "N/A", "na"):
+        return 0.0
+    try:
+        cleaned = re.sub(r"[^\d.-]", "", s.replace(",", ""))
+        return float(cleaned) if cleaned and cleaned != "-" else 0.0
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _get_field(row: dict[str, Any], col_name: str | None) -> Any:
+    if not col_name:
+        return None
+    if col_name in row:
+        return row[col_name]
+    # Check normalized alphanumeric match
+    n_col = _norm(col_name)
+    for k, v in row.items():
+        if _norm(k) == n_col:
+            return v
+    # Check case-insensitive match
+    lower_col = col_name.lower().strip()
+    for k, v in row.items():
+        if k.lower().strip() == lower_col:
+            return v
+    return None
 
 
 def _row_to_statement(row: dict[str, Any], col_map: dict[str, str]) -> StatementRow | None:
     from app.services.statement_parser import sanitize_sensitive_data
 
-    narration_col = col_map.get("narration", "")
-    raw_narr = str(row.get(narration_col, "")).strip()
-    narration = sanitize_sensitive_data(raw_narr)
-
     date_col = col_map.get("date", "")
-    date_val = str(row.get(date_col, "")).strip()
+    raw_date = _get_field(row, date_col)
+    if isinstance(raw_date, (datetime, date)):
+        date_val = raw_date.strftime("%Y-%m-%d")
+    else:
+        date_val = str(raw_date or "").strip()
+
+    # Skip header/footer summary rows (e.g. Opening Balance, Total, Disclaimer, etc.)
+    if not date_val or any(kw in date_val.upper() for kw in ("OPENING", "SUMMARY", "TOTAL", "REPORT", "DISCLAIMER", "GUIDELINES", "REMEMBER")):
+        return None
+    # Require at least some digits in the date
+    if not re.search(r"\d", date_val):
+        return None
+    # Validate it resembles a calendar date (avoiding totals or plain IDs)
+    if not re.search(r"\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}|\d{1,2}[-/ ](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-/ ]\d{2,4}", date_val, re.IGNORECASE):
+        try:
+            from dateutil.parser import parse as parse_dt
+            parse_dt(date_val)
+        except Exception:
+            return None
+
+    narration_col = col_map.get("narration", "")
+    raw_narr = str(_get_field(row, narration_col) or "").strip()
+    if any(kw in raw_narr.upper() for kw in ("OPENING BALANCE", "CLOSING BALANCE", "END OF REPORT", "ACCOUNT SUMMARY")):
+        return None
+    narration = sanitize_sensitive_data(raw_narr)
 
     # Amount + direction
     debit_col  = col_map.get("debit")
     credit_col = col_map.get("credit")
     amt_col    = col_map.get("amount")
 
-    debit_amt  = _parse_amount(row.get(debit_col))  if debit_col  else 0.0
-    credit_amt = _parse_amount(row.get(credit_col)) if credit_col else 0.0
+    debit_amt  = _parse_amount(_get_field(row, debit_col))  if debit_col  else 0.0
+    credit_amt = _parse_amount(_get_field(row, credit_col)) if credit_col else 0.0
 
     if debit_col and credit_col:
         if debit_amt > 0:
@@ -149,7 +252,9 @@ def _row_to_statement(row: dict[str, Any], col_map: dict[str, str]) -> Statement
         else:
             return None   # Empty row
     elif amt_col:
-        amount = _parse_amount(row.get(amt_col))
+        amount = _parse_amount(_get_field(row, amt_col))
+        if amount <= 0:
+            return None
         # Detect direction from a DR/CR column or narration
         drcr_val = ""
         for h in row:
@@ -163,10 +268,11 @@ def _row_to_statement(row: dict[str, Any], col_map: dict[str, str]) -> Statement
         return None
 
     bal_col = col_map.get("balance")
-    balance = _parse_amount(row.get(bal_col)) if bal_col else None
+    balance = _parse_amount(_get_field(row, bal_col)) if bal_col else None
 
     ref_col = col_map.get("reference")
-    reference_no = str(row.get(ref_col, "")).strip() or None
+    raw_ref = str(_get_field(row, ref_col) or "").strip()
+    reference_no = raw_ref if raw_ref and raw_ref.lower() not in ("none", "null", "-", "—") else None
 
     return StatementRow(
         date=date_val,
@@ -183,10 +289,46 @@ def _row_to_statement(row: dict[str, Any], col_map: dict[str, str]) -> Statement
 # Format-specific extractors
 # ---------------------------------------------------------------------------
 
+def _detect_header_and_build_rows(raw_grid: list[Any]) -> list[dict[str, Any]]:
+    """Scan the initial rows for a table header and build structured row dictionaries."""
+    if not raw_grid:
+        return []
+
+    header_idx = 0
+    best_score = -1
+    for idx, r in enumerate(raw_grid[:35]):
+        if not r:
+            continue
+        row_strings = [str(c).strip() for c in r if c is not None and str(c).strip()]
+        if len(row_strings) < 2:
+            continue
+        mapping = _detect_columns(row_strings)
+        score = len(mapping)
+        if score > best_score and score >= 2:
+            best_score = score
+            header_idx = idx
+
+    header_row = raw_grid[header_idx]
+    headers = [str(c).strip() if c is not None and str(c).strip() else f"col_{j}" for j, c in enumerate(header_row)]
+
+    result: list[dict[str, Any]] = []
+    for r in raw_grid[header_idx + 1:]:
+        if not r or not any(c is not None and str(c).strip() for c in r):
+            continue
+        row_dict = {
+            headers[j]: r[j] if j < len(r) else None
+            for j in range(len(headers))
+        }
+        result.append(row_dict)
+    return result
+
+
 def _extract_rows_csv(content: bytes) -> list[dict[str, Any]]:
     text = content.decode("utf-8-sig", errors="replace")
-    reader = csv.DictReader(io.StringIO(text))
-    return [dict(r) for r in reader]
+    lines = list(csv.reader(io.StringIO(text)))
+    if not lines:
+        return []
+    return _detect_header_and_build_rows(lines)
 
 
 def _extract_rows_excel(content: bytes) -> list[dict[str, Any]]:
@@ -196,13 +338,14 @@ def _extract_rows_excel(content: bytes) -> list[dict[str, Any]]:
     # Try openpyxl (xlsx)
     if openpyxl:
         try:
-            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+            # We explicitly use read_only=False because banking exports often omit sheet dimension XML,
+            # which causes openpyxl read_only=True to terminate prematurely after the first row.
+            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=False, data_only=True)
             ws = wb.active
             rows = list(ws.iter_rows(values_only=True))
-            if not rows:
-                return []
-            headers = [str(c).strip() if c is not None else f"col_{i}" for i, c in enumerate(rows[0])]
-            return [dict(zip(headers, row)) for row in rows[1:]]
+            if rows:
+                return _detect_header_and_build_rows(rows)
+            return []
         except Exception as exc:
             logger.debug("openpyxl failed: %s", exc)
 
@@ -211,11 +354,13 @@ def _extract_rows_excel(content: bytes) -> list[dict[str, Any]]:
         try:
             wb = xlrd.open_workbook(file_contents=content)
             ws = wb.sheet_by_index(0)
-            headers = [str(ws.cell_value(0, c)).strip() for c in range(ws.ncols)]
-            return [
-                {headers[c]: ws.cell_value(r, c) for c in range(ws.ncols)}
-                for r in range(1, ws.nrows)
+            rows = [
+                [ws.cell_value(r, c) for c in range(ws.ncols)]
+                for r in range(ws.nrows)
             ]
+            if rows:
+                return _detect_header_and_build_rows(rows)
+            return []
         except Exception as exc:
             logger.debug("xlrd failed: %s", exc)
 
@@ -259,66 +404,81 @@ def _extract_text_table_strategy(text: str) -> list[dict[str, Any]]:
 
 
 def _extract_transactions_by_pattern(text: str) -> list[dict[str, Any]]:
-    """Scan bank statement text for transaction patterns:
-    Date followed by Narration/Description followed by Monetary Amounts.
+    """Scan statement or OCR text for transaction patterns:
+    Date followed by Narration/Description and Debit/Credit/Balance amounts.
     """
     date_re = re.compile(
-        r"^\s*(\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4}|\d{4}[-/\.]\d{1,2}[-/\.]\d{1,2}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{2,4})\s+(.+)$"
+        r"\b([0-9]{1,2}[-/][0-9]{1,2}[-/][0-9]{2,4}|[0-9]{2}[-\s][A-Za-z]{3,9}[-\s][0-9]{2,4})\b"
     )
     amt_re = re.compile(r"\b([0-9]{1,3}(?:,[0-9]{3})*\.[0-9]{2}|[0-9]+\.[0-9]{2})\b")
 
     rows: list[dict[str, Any]] = []
     lines = text.splitlines()
 
-    for line in lines:
-        cleaned_line = line.strip()
+    for orig_line in lines:
+        cleaned_line = orig_line.strip()
         if not cleaned_line:
             continue
 
-        m = date_re.match(cleaned_line)
-        if not m:
-            # Check if this line is a continuation narration for the previous transaction
-            if rows and len(cleaned_line) > 3 and not any(kw in cleaned_line.lower() for kw in ("page", "total", "balance carried", "statement of", "account no")):
-                rows[-1]["narration"] = f"{rows[-1]['narration']} {cleaned_line}".strip()
+        # Normalise space-separated decimals occasionally produced by OCR (e.g. "30 00" -> "30.00")
+        line = re.sub(r"(\d+)\s+(\d{2})\b", r"\1.\2", cleaned_line)
+
+        # Ignore metadata and summary cards
+        if any(kw in line.upper() for kw in (
+            "OPENING", "CLOSING", "AS ON", "PERIOD", "BRANCH", "ACCOUNT DETAILS",
+            "CUSTOMER CARE", "RELATIONSHIP SUMMARY", "MY ACCOUNTS", "SAVING ACCOUNT"
+        )):
             continue
 
-        date_val = m.group(1)
-        rest = m.group(2).strip()
+        dm = date_re.search(line)
+        if not dm:
+            continue
 
-        # Check for optional second date (value date)
-        m_val = date_re.match(rest)
-        if m_val:
-            rest = m_val.group(2).strip()
+        date_val = dm.group(1)
+        rest = (line[:dm.start()] + " " + line[dm.end():]).strip()
 
         amt_matches = list(amt_re.finditer(rest))
         if not amt_matches:
             continue
 
-        first_amt = amt_matches[0]
-        narr = rest[:first_amt.start()].strip()
         amts = [match.group(1) for match in amt_matches]
         num_amts = [float(a.replace(",", "")) for a in amts]
+
+        # Extract narration by removing matched monetary amounts
+        narr = rest
+        for a in amts:
+            narr = narr.replace(a, "")
+        narr = re.sub(r"[\s\-\.]+$", "", narr).strip()
+        narr = re.sub(r"^[\s\-\.]+", "", narr).strip()
+
+        # Direction detection:
+        # Check standard credit tokens (including UPI /CR/, refunds, returns, interest)
+        is_cred = any(w in narr.upper() for w in (
+            "/CR/", "CR", "CREDIT", "REFUND", "REV", "RETURN", "SALARY", "DEPOSIT", "INTEREST"
+        ))
 
         debit = 0.0
         credit = 0.0
         balance = None
 
         if len(num_amts) >= 3:
-            # Format: Debit, Credit, Balance
-            debit = num_amts[0]
-            credit = num_amts[1]
+            # SBI & some bank tables place Credit before Debit
+            if is_cred:
+                credit = num_amts[0] if num_amts[0] > 0 else num_amts[1]
+                debit = 0.0
+            else:
+                debit = num_amts[1] if num_amts[0] == 0.0 else num_amts[0]
+                credit = 0.0
             balance = num_amts[2]
         elif len(num_amts) == 2:
             amt = num_amts[0]
             balance = num_amts[1]
-            is_cred = any(w in narr.upper() for w in ("CREDIT", "REFUND", "REV", "RETURN", "SALARY", "CR", "DEPOSIT"))
             if is_cred:
                 credit = amt
             else:
                 debit = amt
         elif len(num_amts) == 1:
             amt = num_amts[0]
-            is_cred = any(w in narr.upper() for w in ("CREDIT", "REFUND", "REV", "RETURN", "SALARY", "CR", "DEPOSIT"))
             if is_cred:
                 credit = amt
             else:
@@ -327,13 +487,136 @@ def _extract_transactions_by_pattern(text: str) -> list[dict[str, Any]]:
         if debit > 0 or credit > 0 or narr:
             rows.append({
                 "date": date_val,
-                "narration": narr,
+                "narration": narr or "Bank Transaction",
                 "debit": str(debit) if debit > 0 else "",
                 "credit": str(credit) if credit > 0 else "",
                 "balance": str(balance) if balance is not None else "",
             })
 
     return rows
+
+
+async def _run_windows_ocr_images(images: list[Any]) -> str:
+    """Run Windows 10/11 native Media OCR with spatial bounding-box row grouping."""
+    import winsdk.windows.media.ocr as ocr
+    import winsdk.windows.graphics.imaging as imaging
+    import winsdk.windows.storage.streams as streams
+
+    engine = ocr.OcrEngine.try_create_from_user_profile_languages()
+    if not engine:
+        return ""
+
+    all_lines = []
+    for img in images:
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        stream = streams.InMemoryRandomAccessStream()
+        writer = streams.DataWriter(stream)
+        writer.write_bytes(buf.getvalue())
+        await writer.store_async()
+        stream.seek(0)
+
+        decoder = await imaging.BitmapDecoder.create_async(stream)
+        bitmap = await decoder.get_software_bitmap_async()
+        result = await engine.recognize_async(bitmap)
+
+        words = []
+        for line in result.lines:
+            for w in line.words:
+                words.append({"text": w.text, "x": w.bounding_rect.x, "y": w.bounding_rect.y})
+
+        # Group words by line row (tolerance ~18px for scale 2.5)
+        words.sort(key=lambda item: (round(item["y"] / 18) * 18, item["x"]))
+        row_groups: dict[int, list[str]] = {}
+        for w in words:
+            k = round(w["y"] / 18) * 18
+            row_groups.setdefault(k, []).append(w["text"])
+        for k in sorted(row_groups):
+            all_lines.append(" ".join(row_groups[k]))
+
+    return "\n".join(all_lines)
+
+
+def _extract_text_ocr_strategy(pdf_bytes: bytes) -> str:
+    """Run high-accuracy OCR on PDF pages using native Windows OCR or Tesseract."""
+    images = []
+    pypdfium2 = _try_import("pypdfium2")
+    if pypdfium2:
+        try:
+            doc = pypdfium2.PdfDocument(pdf_bytes)
+            for page in doc:
+                images.append(page.render(scale=2.5).to_pil())
+        except Exception as exc:
+            logger.debug("pypdfium2 render failed: %s", exc)
+
+    if not images:
+        pdf2image = _try_import("pdf2image")
+        if pdf2image:
+            try:
+                images = pdf2image.convert_from_bytes(pdf_bytes, dpi=200, fmt="png", thread_count=1)
+            except Exception as exc:
+                logger.debug("pdf2image convert failed: %s", exc)
+
+    if not images:
+        return ""
+
+    # 1. Try Windows native OCR (winsdk) if running on Windows
+    import sys
+    if sys.platform == "win32":
+        winsdk_ocr = _try_import("winsdk.windows.media.ocr")
+        if winsdk_ocr:
+            try:
+                import asyncio
+                return asyncio.run(_run_windows_ocr_images(images))
+            except Exception as exc:
+                logger.debug("Windows OCR failed: %s", exc)
+
+    # 2. Try Tesseract OCR (cross-platform, Linux Docker, or Windows if Tesseract is installed)
+    pytesseract = _try_import("pytesseract")
+    if pytesseract:
+        try:
+            if sys.platform == "win32":
+                import os
+                tess_candidates = [
+                    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+                    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+                    os.path.expanduser(r"~\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"),
+                ]
+                for p in tess_candidates:
+                    if os.path.exists(p):
+                        pytesseract.pytesseract.tesseract_cmd = p
+                        break
+
+            ocr_lines = []
+            for img in images:
+                try:
+                    data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+                    words = []
+                    for i in range(len(data.get("text", []))):
+                        t = data["text"][i].strip()
+                        if t:
+                            words.append({
+                                "text": t,
+                                "x": data["left"][i],
+                                "y": data["top"][i],
+                            })
+                    words.sort(key=lambda w: (round(w["y"] / 18) * 18, w["x"]))
+                    groups: dict[int, list[str]] = {}
+                    for w in words:
+                        k = round(w["y"] / 18) * 18
+                        groups.setdefault(k, []).append(w["text"])
+                    for k in sorted(groups):
+                        ocr_lines.append(" ".join(groups[k]))
+                except Exception:
+                    # Fallback to direct string extraction
+                    raw_text = pytesseract.image_to_string(img)
+                    if raw_text:
+                        ocr_lines.append(raw_text)
+            return "\n".join(ocr_lines)
+        except Exception as exc:
+            logger.debug("pytesseract failed: %s", exc)
+
+    return ""
 
 
 def _extract_rows_pdf(content: bytes, password: str | None = None) -> list[dict[str, Any]]:
@@ -343,7 +626,7 @@ def _extract_rows_pdf(content: bytes, password: str | None = None) -> list[dict[
     2. Borderless text-aligned table extraction via pdfplumber
     3. Delimited and whitespace-aligned column text extraction
     4. Universal transaction pattern regex scanner
-    5. Scanned document OCR fallback (pdf2image + pytesseract)
+    5. Scanned document OCR fallback (Windows Media OCR / Tesseract)
     """
     pdfplumber = _try_import("pdfplumber")
     pikepdf    = _try_import("pikepdf")
@@ -399,20 +682,23 @@ def _extract_rows_pdf(content: bytes, password: str | None = None) -> list[dict[
                         data_start = 0
                         for i, r in enumerate(table):
                             clean = [c for c in r if c and str(c).strip()]
-                            if len(clean) >= 2 and any(
-                                any(kw in str(c).lower() for kw in ("date", "narration", "particular", "debit", "credit", "amount"))
-                                for c in clean
-                            ):
+                            has_date = any(any(d in str(c).lower() for d in ("date", "dt", "time")) for c in clean)
+                            has_other = any(any(k in str(c).lower() for k in ("narration", "particular", "debit", "credit", "amount", "balance", "reference", "ref")) for c in clean)
+                            if len(clean) >= 2 and has_date and has_other:
                                 header_row = [str(c).strip() if c else f"col_{j}" for j, c in enumerate(r)]
                                 data_start = i + 1
                                 break
                         if header_row:
                             for r in table[data_start:]:
                                 if any(c for c in r if c and str(c).strip()):
-                                    rows.append({
+                                    row_dict = {
                                         header_row[j]: str(r[j]).strip() if j < len(r) and r[j] else ""
                                         for j in range(len(header_row))
-                                    })
+                                    }
+                                    # Must contain an actual date
+                                    date_val = str(row_dict.get(header_row[0], "")).strip()
+                                    if re.search(r"\d", date_val):
+                                        rows.append(row_dict)
 
                     # Strategy 2: Borderless text-aligned tables
                     if not rows:
@@ -428,20 +714,22 @@ def _extract_rows_pdf(content: bytes, password: str | None = None) -> list[dict[
                             data_start = 0
                             for i, r in enumerate(table):
                                 clean = [c for c in r if c and str(c).strip()]
-                                if len(clean) >= 2 and any(
-                                    any(kw in str(c).lower() for kw in ("date", "narration", "particular", "debit", "credit", "amount"))
-                                    for c in clean
-                                ):
+                                has_date = any(any(d in str(c).lower() for d in ("date", "dt", "time")) for c in clean)
+                                has_other = any(any(k in str(c).lower() for k in ("narration", "particular", "debit", "credit", "amount", "balance", "reference", "ref")) for c in clean)
+                                if len(clean) >= 2 and has_date and has_other:
                                     header_row = [str(c).strip() if c else f"col_{j}" for j, c in enumerate(r)]
                                     data_start = i + 1
                                     break
                             if header_row:
                                 for r in table[data_start:]:
                                     if any(c for c in r if c and str(c).strip()):
-                                        rows.append({
+                                        row_dict = {
                                             header_row[j]: str(r[j]).strip() if j < len(r) and r[j] else ""
                                             for j in range(len(header_row))
-                                        })
+                                        }
+                                        date_val = str(row_dict.get(header_row[0], "")).strip()
+                                        if re.search(r"\d", date_val):
+                                            rows.append(row_dict)
 
                     # Accumulate text for Strategy 3 & 4
                     p_text = page.extract_text() or ""
@@ -472,15 +760,12 @@ def _extract_rows_pdf(content: bytes, password: str | None = None) -> list[dict[
         if pattern_rows:
             return pattern_rows
 
-    # Strategy 5: Scanned document OCR fallback
+    # Strategy 5: Scanned / Vector document OCR fallback
     try:
-        from pdf2image import convert_from_bytes
-        import pytesseract
-        images = convert_from_bytes(pdf_bytes, dpi=200, fmt="png", thread_count=1)
-        ocr_text = "\n".join(pytesseract.image_to_string(img) for img in images)
+        ocr_text = _extract_text_ocr_strategy(pdf_bytes)
         if ocr_text.strip():
             text_rows = _extract_text_table_strategy(ocr_text)
-            if text_rows:
+            if text_rows and len(text_rows) >= 2:
                 return text_rows
             pattern_rows = _extract_transactions_by_pattern(ocr_text)
             if pattern_rows:
@@ -507,6 +792,8 @@ def ingest_bank_statement(
     filename: str,
     organization_id: int,
     pdf_password: str | None = None,
+    bank_preset: str | None = None,
+    custom_headers: dict[str, str] | None = None,
 ) -> tuple[list[StatementRow], IngestionResult]:
     """Parse a CSV, Excel, or PDF bank statement file into sanitized StatementRow objects.
 
@@ -515,6 +802,8 @@ def ingest_bank_statement(
         filename: Original filename (used to detect format).
         organization_id: Tenant identifier (used for audit only here; DB write done by caller).
         pdf_password: Optional password for encrypted PDF statements.
+        bank_preset: Optional bank template ("sbi", "ippb", "hdfc", "icici", "axis").
+        custom_headers: Optional manual column mapping dictionary.
 
     Returns:
         (rows, result) where rows are ready for payment ingestion.
@@ -546,6 +835,29 @@ def ingest_bank_statement(
     # Detect column semantics
     col_map = _detect_columns(list(raw_rows[0].keys()))
 
+    # Apply bank preset if provided
+    if bank_preset and bank_preset.lower() in BANK_PRESETS:
+        preset_map = BANK_PRESETS[bank_preset.lower()]
+        for role, expected_col in preset_map.items():
+            matched_header = next(
+                (h for h in raw_rows[0].keys() if _norm(h) == _norm(expected_col) or h.lower() == expected_col.lower()),
+                None
+            )
+            if matched_header:
+                col_map[role] = matched_header
+            elif role not in col_map:
+                col_map[role] = expected_col
+
+    # Apply explicit user-defined column headers if provided
+    if custom_headers:
+        for semantic_role, actual_col in custom_headers.items():
+            if actual_col and actual_col.strip():
+                matched_header = next(
+                    (h for h in raw_rows[0].keys() if _norm(h) == _norm(actual_col) or h.lower() == actual_col.lower().strip()),
+                    actual_col.strip()
+                )
+                col_map[semantic_role] = matched_header
+
     if "date" not in col_map and "narration" not in col_map:
         result.errors.append(
             "Could not identify required columns (date, narration, debit/credit). "
@@ -575,6 +887,8 @@ def ingest_and_record_statement(
     content: bytes,
     filename: str,
     pdf_password: str | None = None,
+    bank_preset: str | None = None,
+    custom_headers: dict[str, str] | None = None,
 ) -> StatementIngestionResponse:
     """Ingest a multi-format bank statement (CSV/Excel/PDF), sanitize PII,
     parse banking/card channels, record payments, and atomically reconcile reversals.
@@ -584,6 +898,8 @@ def ingest_and_record_statement(
         filename=filename,
         organization_id=organization.id,
         pdf_password=pdf_password,
+        bank_preset=bank_preset,
+        custom_headers=custom_headers,
     )
 
     if res.errors and not rows:
