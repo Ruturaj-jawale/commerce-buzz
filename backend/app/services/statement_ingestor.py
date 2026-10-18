@@ -949,6 +949,11 @@ def ingest_and_record_statement(
     sorted_rows = sorted(rows, key=lambda r: 0 if r.direction == "DEBIT" else 1)
 
     for row in sorted_rows:
+        # Use a SAVEPOINT (nested transaction) per row so that a failure on one
+        # row does not poison the PostgreSQL session for all subsequent rows.
+        # SQLite tolerates errors silently, but PostgreSQL aborts the entire
+        # transaction after any failed statement unless we rollback to a savepoint.
+        savepoint = db.begin_nested()
         try:
             row_hash = hashlib.sha256(
                 f"{row.date}:{row.narration}:{row.amount}:{row.direction}:{row.balance}:{row.reference_no}".encode()
@@ -1031,8 +1036,10 @@ def ingest_and_record_statement(
                     )
                 )
 
+            savepoint.commit()
             rows_ingested += 1
         except Exception as exc:
+            savepoint.rollback()
             logger.warning("Failed to land statement row: %s", exc)
             res.errors.append(f"Row failed to persist: {exc}")
 
