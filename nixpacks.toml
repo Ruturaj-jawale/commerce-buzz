@@ -1,0 +1,11 @@
+# Nixpacks configuration for Railway deployment
+# Ensures system binaries for OCR and PDF image rasterization are installed
+
+[phases.setup]
+nixPkgs = ["tesseract", "tesseract-ocr-eng", "poppler_utils", "libpqxx"]
+
+[phases.install]
+cmds = ["pip install -r backend/requirements.txt"]
+
+[start]
+cmd = "uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port $PORT"

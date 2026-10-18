@@ -17,6 +17,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -27,7 +28,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.models import Organization, Payment, ReversalLink, Storefront
+from app.db.models import AnalyticsEvent, Organization, Payment, ReversalLink, Storefront
 from app.integrations.storefronts.base import CanonicalCommerceEvent
 from app.schemas.risk import StatementIngestionResponse
 from app.services.payment_service import PaymentService
@@ -586,6 +587,12 @@ def _extract_text_ocr_strategy(pdf_bytes: bytes) -> str:
                     if os.path.exists(p):
                         pytesseract.pytesseract.tesseract_cmd = p
                         break
+            else:
+                import os
+                import shutil
+                tess_bin = shutil.which("tesseract") or "/usr/bin/tesseract"
+                if os.path.exists(tess_bin):
+                    pytesseract.pytesseract.tesseract_cmd = tess_bin
 
             ocr_lines = []
             for img in images:
@@ -600,13 +607,17 @@ def _extract_text_ocr_strategy(pdf_bytes: bytes) -> str:
                                 "x": data["left"][i],
                                 "y": data["top"][i],
                             })
-                    words.sort(key=lambda w: (round(w["y"] / 18) * 18, w["x"]))
+                    words.sort(key=lambda w: (round(w["y"] / 20) * 20, w["x"]))
                     groups: dict[int, list[str]] = {}
                     for w in words:
-                        k = round(w["y"] / 18) * 18
+                        k = round(w["y"] / 20) * 20
                         groups.setdefault(k, []).append(w["text"])
                     for k in sorted(groups):
                         ocr_lines.append(" ".join(groups[k]))
+                    if len(groups) < 3:
+                        raw_text = pytesseract.image_to_string(img)
+                        if raw_text:
+                            ocr_lines.append(raw_text)
                 except Exception:
                     # Fallback to direct string extraction
                     raw_text = pytesseract.image_to_string(img)
@@ -939,11 +950,13 @@ def ingest_and_record_statement(
 
     for row in sorted_rows:
         try:
+            row_hash = hashlib.sha256(
+                f"{row.date}:{row.narration}:{row.amount}:{row.direction}:{row.balance}:{row.reference_no}".encode()
+            ).hexdigest()[:12]
             if row.reference_no:
-                order_id = f"REF-{row.reference_no}"
+                order_id = f"REF-{row.reference_no}-{row_hash}"
             else:
-                h = hashlib.sha256(f"{row.date}:{row.narration}:{row.amount}:{row.direction}".encode()).hexdigest()[:16]
-                order_id = f"STMT-{h}"
+                order_id = f"STMT-{row_hash}"
 
             idempotency_key = f"stmt-{organization.id}-{order_id}"
 
@@ -958,18 +971,28 @@ def ingest_and_record_statement(
                 event_name = "purchase"
                 total_debit += row.amount
 
+            occurred_at = datetime.utcnow()
+            if row.date:
+                try:
+                    from dateutil import parser as dt_parser
+                    occurred_at = dt_parser.parse(row.date)
+                except Exception:
+                    pass
+
             canonical = CanonicalCommerceEvent(
                 event_name=event_name,
                 order_id=order_id,
                 revenue=row.amount,
                 currency="INR",
                 properties={
-                    "occurred_at": datetime.now().isoformat(),
+                    "occurred_at": occurred_at.isoformat(),
                     "idempotency_key": idempotency_key,
                     "narration": row.narration,
                     "direction": row.direction,
                     "channel": channel,
                     "entity_name": entity_name,
+                    "payment_method": channel,
+                    "customer_id": entity_name,
                     "reference_no": row.reference_no or parsed.reference_no,
                     "balance": row.balance,
                     "statement_date": row.date,
@@ -984,12 +1007,41 @@ def ingest_and_record_statement(
             )
 
             payment_service.land_event(db, organization, storefront, canonical)
+
+            # Persist to AnalyticsEvent so the statement appears in All Transactions, Metrics, and Export CSV
+            existing_event = db.scalar(
+                select(AnalyticsEvent).where(
+                    AnalyticsEvent.organization_id == organization.id,
+                    AnalyticsEvent.idempotency_key == idempotency_key,
+                )
+            )
+            if existing_event is None:
+                db.add(
+                    AnalyticsEvent(
+                        organization_id=organization.id,
+                        storefront_id=storefront.id,
+                        provider=storefront.provider,
+                        event_name=event_name,
+                        order_id=order_id,
+                        revenue=row.amount,
+                        currency="INR",
+                        properties_json=json.dumps(canonical.properties),
+                        idempotency_key=idempotency_key,
+                        occurred_at=occurred_at,
+                    )
+                )
+
             rows_ingested += 1
         except Exception as exc:
             logger.warning("Failed to land statement row: %s", exc)
             res.errors.append(f"Row failed to persist: {exc}")
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Failed to commit statement batch: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Failed to record statement transactions: {exc}")
 
     reversals_after = db.scalar(
         select(func.count(ReversalLink.id)).where(ReversalLink.organization_id == organization.id)

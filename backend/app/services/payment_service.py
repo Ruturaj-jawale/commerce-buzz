@@ -315,19 +315,26 @@ class PaymentService:
             payment.failure_code = None
             payment.failure_reason = None
             self._close_recovery_case(db, organization, payment, canonical.revenue)
-        db.add(
-            PaymentAttempt(
-                organization_id=organization.id,
-                payment_id=payment.id,
-                attempt_no=int(metadata.get("attempt") or self._next_attempt_no(db, payment.id)),
-                status={"payment_attempted": "attempted", "payment_failed": "failed", "payment_succeeded": "succeeded"}[canonical.event_name],
-                amount=canonical.revenue,
-                currency=canonical.currency,
-                failure_code=str(failure_code) if failure_code else None,
-                failure_reason=str(failure_reason) if failure_reason else None,
-                external_ref=key,
+        existing_attempt = db.scalar(
+            select(PaymentAttempt).where(
+                PaymentAttempt.organization_id == organization.id,
+                PaymentAttempt.external_ref == key,
             )
         )
+        if existing_attempt is None:
+            db.add(
+                PaymentAttempt(
+                    organization_id=organization.id,
+                    payment_id=payment.id,
+                    attempt_no=int(metadata.get("attempt") or self._next_attempt_no(db, payment.id)),
+                    status={"payment_attempted": "attempted", "payment_failed": "failed", "payment_succeeded": "succeeded"}[canonical.event_name],
+                    amount=canonical.revenue,
+                    currency=canonical.currency,
+                    failure_code=str(failure_code) if failure_code else None,
+                    failure_reason=str(failure_reason) if failure_reason else None,
+                    external_ref=key,
+                )
+            )
 
     def _land_payment_status(self, db: Session, organization: Organization, storefront: Storefront, canonical: CanonicalCommerceEvent, key: str, metadata: dict[str, Any]) -> None:
         payment_ref = str(metadata.get("payment_id") or canonical.order_id)
@@ -342,38 +349,52 @@ class PaymentService:
         refund_payment = self._ensure_payment(db, organization, storefront, canonical, payment_ref)
         self._reconcile_reversal(db, organization, refund_payment, canonical)
 
-        db.add(
-            Refund(
-                organization_id=organization.id,
-                order_id=order.id,
-                refund_ref=str(metadata.get("refund_id") or key),
-                amount=canonical.revenue,
-                currency=canonical.currency,
-                reason=str(metadata.get("reason")) if metadata.get("reason") else None,
-                external_ref=key,
-                raw_json=json.dumps(canonical.properties),
+        existing_refund = db.scalar(
+            select(Refund).where(
+                Refund.organization_id == organization.id,
+                Refund.external_ref == key,
             )
         )
-        refunded = db.scalar(select(func.coalesce(func.sum(Refund.amount), 0.0)).where(Refund.order_id == order.id, Refund.organization_id == organization.id)) or 0.0
-        refunded += canonical.revenue
-        if order.status in {"paid", "partially_refunded", "refunded"}:
-            order.status = "refunded" if refunded >= order.amount else "partially_refunded"
+        if existing_refund is None:
+            db.add(
+                Refund(
+                    organization_id=organization.id,
+                    order_id=order.id,
+                    refund_ref=str(metadata.get("refund_id") or key),
+                    amount=canonical.revenue,
+                    currency=canonical.currency,
+                    reason=str(metadata.get("reason")) if metadata.get("reason") else None,
+                    external_ref=key,
+                    raw_json=json.dumps(canonical.properties),
+                )
+            )
+            refunded = db.scalar(select(func.coalesce(func.sum(Refund.amount), 0.0)).where(Refund.order_id == order.id, Refund.organization_id == organization.id)) or 0.0
+            refunded += canonical.revenue
+            if order.status in {"paid", "partially_refunded", "refunded"}:
+                order.status = "refunded" if refunded >= order.amount else "partially_refunded"
 
     def _land_chargeback(self, db: Session, organization: Organization, storefront: Storefront, canonical: CanonicalCommerceEvent, key: str, metadata: dict[str, Any]) -> None:
         payment_ref = str(metadata.get("payment_id") or canonical.order_id)
         payment = self._ensure_payment(db, organization, storefront, canonical, payment_ref)
         payment.status = "chargeback"
-        db.add(
-            Chargeback(
-                organization_id=organization.id,
-                payment_id=payment.id,
-                amount=canonical.revenue,
-                currency=canonical.currency,
-                status=str(metadata.get("status") or "open"),
-                external_ref=key,
-                raw_json=json.dumps(canonical.properties),
+        existing_cb = db.scalar(
+            select(Chargeback).where(
+                Chargeback.organization_id == organization.id,
+                Chargeback.external_ref == key,
             )
         )
+        if existing_cb is None:
+            db.add(
+                Chargeback(
+                    organization_id=organization.id,
+                    payment_id=payment.id,
+                    amount=canonical.revenue,
+                    currency=canonical.currency,
+                    status=str(metadata.get("status") or "open"),
+                    external_ref=key,
+                    raw_json=json.dumps(canonical.properties),
+                )
+            )
 
     def _open_case_for_order(self, db: Session, organization: Organization, order: CommerceOrder) -> RecoveryCase | None:
         return db.scalar(

@@ -182,7 +182,15 @@ function tableToCsvFile(columns: string[], rows: Array<Record<string, string>>, 
   return new File([csvContent], cleanName, { type: "text/csv" });
 }
 
-export function ImportWizard({ storefronts, onImported }: { storefronts: Storefront[]; onImported: () => void }) {
+export function ImportWizard({
+  storefronts,
+  onImported,
+  onViewTransactions,
+}: {
+  storefronts: Storefront[];
+  onImported: () => void;
+  onViewTransactions?: () => void;
+}) {
   const [selectedStorefront, setSelectedStorefront] = useState<number | "">("");
   const [sourceName, setSourceName] = useState("");
   const [sourceLabel, setSourceLabel] = useState("file-import");
@@ -992,7 +1000,20 @@ export function ImportWizard({ storefronts, onImported }: { storefronts: Storefr
               </div>
 
               <div style={{ display: "flex", gap: "1rem", marginTop: "1.5rem" }}>
-                <button type="button" className="primary" onClick={onResetStatement}>
+                {onViewTransactions && (
+                  <button
+                    type="button"
+                    className="primary"
+                    style={{ background: "#8b5cf6", borderColor: "#7c3aed" }}
+                    onClick={() => {
+                      onResetStatement();
+                      onViewTransactions();
+                    }}
+                  >
+                    View Ingested Transactions →
+                  </button>
+                )}
+                <button type="button" onClick={onResetStatement}>
                   Import Another Statement
                 </button>
               </div>

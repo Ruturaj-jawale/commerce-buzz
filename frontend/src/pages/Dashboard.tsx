@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { MeResponse } from "../api/auth";
 import { StatusCard } from "../components/StatusCard";
 import { fetchTransactions, transactionExportUrl, type Transaction } from "../api/commerce";
@@ -51,10 +51,27 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
   const [userLensMode, setUserLensMode] = useState<"auto" | "COMMERCE" | "BANK_NETWORK">("auto");
   const [bankRiskSummary, setBankRiskSummary] = useState<RiskAssessmentSummary | null>(null);
 
-  useEffect(() => {
+  const refreshRiskAndLens = useCallback(() => {
     void fetchSystemLens().then(setSystemLens).catch(() => {});
     void fetchRiskAssessment().then(setBankRiskSummary).catch(() => {});
   }, []);
+
+  const loadTransactions = useCallback(() => {
+    void fetchTransactions({ query, status }).then((data) => {
+      setTransactions(data.items);
+      setTransactionTotal(data.total);
+    }).catch(() => {});
+  }, [query, status]);
+
+  const handleImported = useCallback(async () => {
+    await reload();
+    refreshRiskAndLens();
+    loadTransactions();
+  }, [reload, refreshRiskAndLens, loadTransactions]);
+
+  useEffect(() => {
+    refreshRiskAndLens();
+  }, [refreshRiskAndLens, view, userLensMode]);
 
   const activeLens =
     userLensMode === "auto"
@@ -69,12 +86,9 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
 
   useEffect(() => {
     if (view === "transactions") {
-      void fetchTransactions({ query, status }).then((data) => {
-        setTransactions(data.items);
-        setTransactionTotal(data.total);
-      });
+      loadTransactions();
     }
-  }, [view, query, status]);
+  }, [view, loadTransactions]);
 
   const aov = summary?.purchases ? summary.revenue / summary.purchases : 0;
   const currency = summary?.currency ?? "USD";
@@ -567,7 +581,11 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
         )}
 
         {view === "import" && (
-          <ImportWizard storefronts={storefronts} onImported={() => void reload()} />
+          <ImportWizard
+            storefronts={storefronts}
+            onImported={handleImported}
+            onViewTransactions={() => setView("transactions")}
+          />
         )}
 
         {view === "transactions" && (
