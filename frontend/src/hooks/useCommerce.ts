@@ -19,7 +19,7 @@ import {
   type Storefront,
 } from "../api/commerce";
 
-export function useCommerce() {
+export function useCommerce(source?: string) {
   const [storefronts, setStorefronts] = useState<Storefront[]>([]);
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [events, setEvents] = useState<AnalyticsEvent[]>([]);
@@ -44,12 +44,12 @@ export function useCommerce() {
         nextRisk,
       ] = await Promise.all([
         fetchStorefronts().catch(() => []),
-        fetchAnalyticsSummary().catch(() => null),
-        fetchAnalyticsEvents().catch(() => []),
-        fetchTopProducts(8).catch(() => []),
-        fetchCustomerMetrics().catch(() => null),
-        fetchRefundSummary().catch(() => null),
-        fetchPaymentMetrics().catch(() => null),
+        fetchAnalyticsSummary(source).catch(() => null),
+        fetchAnalyticsEvents(source).catch(() => []),
+        fetchTopProducts(8, source).catch(() => []),
+        fetchCustomerMetrics(source).catch(() => null),
+        fetchRefundSummary(source).catch(() => null),
+        fetchPaymentMetrics(source).catch(() => null),
         fetchRevenueAtRisk().catch(() => null),
       ]);
       setStorefronts(nextStores);
@@ -63,7 +63,7 @@ export function useCommerce() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load analytics");
     }
-  }, []);
+  }, [source]);
 
   useEffect(() => {
     void reload().catch((err: Error) => setError(err.message));

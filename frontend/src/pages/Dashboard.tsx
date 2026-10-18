@@ -22,21 +22,6 @@ import {
 type View = "overview" | "transactions" | "risk" | "integrations" | "import";
 
 export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout: () => void }) {
-  const {
-    storefronts,
-    summary,
-    events,
-    topProducts,
-    customerMetrics,
-    refundSummary,
-    paymentMetrics,
-    revenueAtRisk,
-    error,
-    busy,
-    connect,
-    reload,
-  } = useCommerce();
-
   const [view, setView] = useState<View>("overview");
   const [name, setName] = useState("");
   const [source, setSource] = useState("");
@@ -51,17 +36,40 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
   const [userLensMode, setUserLensMode] = useState<"auto" | "COMMERCE" | "BANK_NETWORK">("auto");
   const [bankRiskSummary, setBankRiskSummary] = useState<RiskAssessmentSummary | null>(null);
 
+  const activeLens =
+    userLensMode === "auto"
+      ? (systemLens?.recommended_lens ?? "COMMERCE")
+      : userLensMode;
+
+  // Derive source filter: Commerce lens = exclude bank data, Bank lens = only bank data
+  const dataSource = activeLens === "BANK_NETWORK" ? "bank-statement" : "commerce";
+
+  const {
+    storefronts,
+    summary,
+    events,
+    topProducts,
+    customerMetrics,
+    refundSummary,
+    paymentMetrics,
+    revenueAtRisk,
+    error,
+    busy,
+    connect,
+    reload,
+  } = useCommerce(dataSource);
+
   const refreshRiskAndLens = useCallback(() => {
     void fetchSystemLens().then(setSystemLens).catch(() => {});
     void fetchRiskAssessment().then(setBankRiskSummary).catch(() => {});
   }, []);
 
   const loadTransactions = useCallback(() => {
-    void fetchTransactions({ query, status }).then((data) => {
+    void fetchTransactions({ query, status, source: dataSource }).then((data) => {
       setTransactions(data.items);
       setTransactionTotal(data.total);
     }).catch(() => {});
-  }, [query, status]);
+  }, [query, status, dataSource]);
 
   const handleImported = useCallback(async () => {
     await reload();
@@ -71,15 +79,13 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
 
   useEffect(() => {
     refreshRiskAndLens();
-  }, [refreshRiskAndLens, view, userLensMode]);
-
-  const activeLens =
-    userLensMode === "auto"
-      ? (systemLens?.recommended_lens ?? "COMMERCE")
-      : userLensMode;
+  }, [refreshRiskAndLens, view, userLensMode, activeLens]);
 
   useEffect(() => {
     if (activeLens === "COMMERCE" && view === "risk") {
+      setView("overview");
+    }
+    if (activeLens === "BANK_NETWORK" && view === "integrations") {
       setView("overview");
     }
   }, [activeLens, view]);
@@ -115,7 +121,7 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
           ["overview", "Dashboard"],
           ["transactions", "Transactions"],
           ...(activeLens === "BANK_NETWORK" ? [["risk", "Risk Assessment"] as const] : []),
-          ["integrations", "Integrations"],
+          ...(activeLens === "COMMERCE" ? [["integrations", "Integrations"] as const] : []),
           ["import", "Import Studio"],
         ].map(([id, label]) => (
           <button
@@ -585,6 +591,7 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
             storefronts={storefronts}
             onImported={handleImported}
             onViewTransactions={() => setView("transactions")}
+            initialMode={activeLens === "BANK_NETWORK" ? "bank_statement" : "commerce"}
           />
         )}
 
@@ -595,7 +602,7 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
                 <h2>All transactions</h2>
                 <p className="muted">{transactionTotal} matching transactions</p>
               </div>
-              <a className="button-link" href={transactionExportUrl()}>
+              <a className="button-link" href={transactionExportUrl(dataSource)}>
                 Export CSV
               </a>
             </div>

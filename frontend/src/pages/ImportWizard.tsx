@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import type { Storefront } from "../api/commerce";
 import {
   fetchImport,
@@ -186,10 +186,12 @@ export function ImportWizard({
   storefronts,
   onImported,
   onViewTransactions,
+  initialMode,
 }: {
   storefronts: Storefront[];
   onImported: () => void;
   onViewTransactions?: () => void;
+  initialMode?: "commerce" | "bank_statement";
 }) {
   const [selectedStorefront, setSelectedStorefront] = useState<number | "">("");
   const [sourceName, setSourceName] = useState("");
@@ -228,7 +230,15 @@ export function ImportWizard({
   const [busy, setBusy] = useState(false);
 
   // Studio mode: commerce orders vs bank & card statement
-  const [studioMode, setStudioMode] = useState<"commerce" | "bank_statement">("commerce");
+  const [studioMode, setStudioMode] = useState<"commerce" | "bank_statement">(
+    initialMode ?? "commerce"
+  );
+
+  useEffect(() => {
+    if (initialMode) {
+      setStudioMode(initialMode);
+    }
+  }, [initialMode]);
 
   const BANK_HEADER_PRESETS: Record<
     string,
@@ -639,8 +649,7 @@ export function ImportWizard({
     <section className="panel">
       <h2>Schema &amp; Document Import Studio</h2>
       <p className="lede">
-        Upload any CSV, Excel workbook, PDF invoice/statement, or document image (.png, .jpg, .webp).
-        Built-in AI OCR extracts tabular data into an Excel-style grid for cleaning, type casting, and immediate analytics on your dashboard.
+        Upload any CSV or Excel workbook (.xlsx, .xls). Tabular data is extracted into an Excel-style grid for cleaning, type casting, and immediate analytics on your dashboard.
       </p>
 
       {/* ── Studio Mode Switcher: Commerce Orders vs Bank Statements ── */}
@@ -706,11 +715,31 @@ export function ImportWizard({
 
           {stmtPhase !== "result" ? (
             <form className="form" onSubmit={(e) => void onIngestStatement(e)}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  padding: "0.65rem 0.9rem",
+                  background: "rgba(59, 130, 246, 0.1)",
+                  border: "1px solid rgba(59, 130, 246, 0.3)",
+                  borderRadius: "8px",
+                  fontSize: "0.84rem",
+                  color: "#93c5fd",
+                  marginBottom: "0.75rem",
+                }}
+              >
+                <span>ℹ️</span>
+                <span>
+                  <strong>Supported Formats:</strong> We only support <strong>CSV</strong> and <strong>Excel (.xlsx, .xls)</strong> files. Please export your statement from your online banking portal as CSV or Excel.
+                </span>
+              </div>
+
               <label>
-                Bank / Card Statement File (.csv, .xlsx, .xls, .pdf)
+                Bank / Card Statement File (.csv, .xlsx, .xls)
                 <input
                   type="file"
-                  accept=".csv,.xlsx,.xls,.pdf"
+                  accept=".csv,.xlsx,.xls"
                   required
                   onChange={(e) => void handleStmtFileSelect(e.target.files?.[0] || null)}
                 />
@@ -1078,11 +1107,31 @@ export function ImportWizard({
             </>
           ) : null}
 
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              padding: "0.65rem 0.9rem",
+              background: "rgba(59, 130, 246, 0.1)",
+              border: "1px solid rgba(59, 130, 246, 0.3)",
+              borderRadius: "8px",
+              fontSize: "0.84rem",
+              color: "#93c5fd",
+              marginBottom: "0.75rem",
+            }}
+          >
+            <span>ℹ️</span>
+            <span>
+              <strong>Supported Formats:</strong> We only support <strong>CSV</strong> and <strong>Excel (.xlsx, .xls)</strong> files for commerce order data imports.
+            </span>
+          </div>
+
           <label>
-            File (.csv, .xlsx, .pdf, or image .png, .jpg, .webp)
+            File (.csv, .xlsx, .xls)
             <input
               type="file"
-              accept=".csv,.xlsx,.pdf,.png,.jpg,.jpeg,.webp,.bmp"
+              accept=".csv,.xlsx,.xls"
               onChange={(e) => handleFileSelection(e.target.files?.[0] ?? null)}
               required
             />

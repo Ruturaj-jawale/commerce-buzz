@@ -33,33 +33,33 @@ _jobs = IngestionJobService()
 
 
 @router.get("/summary", response_model=AnalyticsSummary)
-def analytics_summary(start_date: date | None = None, end_date: date | None = None, organization: Organization = Depends(get_current_organization), db: Session = Depends(get_db)) -> AnalyticsSummary:
-    return _service.summary(db, organization, start_date, end_date)
+def analytics_summary(start_date: date | None = None, end_date: date | None = None, source: str | None = None, organization: Organization = Depends(get_current_organization), db: Session = Depends(get_db)) -> AnalyticsSummary:
+    return _service.summary(db, organization, start_date, end_date, source=source)
 
 
 @router.get("/top-products", response_model=list[ProductMetric])
-def top_products(start_date: date | None = None, end_date: date | None = None, limit: int = 10, organization: Organization = Depends(get_current_organization), db: Session = Depends(get_db)) -> list[ProductMetric]:
-    return _service.top_products(db, organization, start_date, end_date, min(max(limit, 1), 100))
+def top_products(start_date: date | None = None, end_date: date | None = None, limit: int = 10, source: str | None = None, organization: Organization = Depends(get_current_organization), db: Session = Depends(get_db)) -> list[ProductMetric]:
+    return _service.top_products(db, organization, start_date, end_date, min(max(limit, 1), 100), source=source)
 
 
 @router.get("/customer-metrics", response_model=CustomerMetrics)
-def customer_metrics(start_date: date | None = None, end_date: date | None = None, organization: Organization = Depends(get_current_organization), db: Session = Depends(get_db)) -> CustomerMetrics:
-    return _service.customer_metrics(db, organization, start_date, end_date)
+def customer_metrics(start_date: date | None = None, end_date: date | None = None, source: str | None = None, organization: Organization = Depends(get_current_organization), db: Session = Depends(get_db)) -> CustomerMetrics:
+    return _service.customer_metrics(db, organization, start_date, end_date, source=source)
 
 
 @router.get("/refund-summary", response_model=RefundSummary)
-def refund_summary(start_date: date | None = None, end_date: date | None = None, organization: Organization = Depends(get_current_organization), db: Session = Depends(get_db)) -> RefundSummary:
-    return _service.refund_summary(db, organization, start_date, end_date)
+def refund_summary(start_date: date | None = None, end_date: date | None = None, source: str | None = None, organization: Organization = Depends(get_current_organization), db: Session = Depends(get_db)) -> RefundSummary:
+    return _service.refund_summary(db, organization, start_date, end_date, source=source)
 
 
 @router.get("/payment-metrics", response_model=PaymentMetrics)
-def payment_metrics(start_date: date | None = None, end_date: date | None = None, organization: Organization = Depends(get_current_organization), db: Session = Depends(get_db)) -> PaymentMetrics:
-    return _service.payment_metrics(db, organization, start_date, end_date)
+def payment_metrics(start_date: date | None = None, end_date: date | None = None, source: str | None = None, organization: Organization = Depends(get_current_organization), db: Session = Depends(get_db)) -> PaymentMetrics:
+    return _service.payment_metrics(db, organization, start_date, end_date, source=source)
 
 
 @router.get("/payment-recovery", response_model=RecoveryMetrics)
-def payment_recovery(start_date: date | None = None, end_date: date | None = None, organization: Organization = Depends(get_current_organization), db: Session = Depends(get_db)) -> RecoveryMetrics:
-    return _service.payment_recovery(db, organization, start_date, end_date)
+def payment_recovery(start_date: date | None = None, end_date: date | None = None, source: str | None = None, organization: Organization = Depends(get_current_organization), db: Session = Depends(get_db)) -> RecoveryMetrics:
+    return _service.payment_recovery(db, organization, start_date, end_date, source=source)
 
 
 @router.get("/revenue-at-risk", response_model=RevenueAtRisk)
@@ -68,8 +68,8 @@ def revenue_at_risk(organization: Organization = Depends(get_current_organizatio
 
 
 @router.get("/events", response_model=list[AnalyticsEventRead])
-def analytics_events(organization: Organization = Depends(get_current_organization), db: Session = Depends(get_db)) -> list[AnalyticsEventRead]:
-    return _service.list_events(db, organization)
+def analytics_events(source: str | None = None, organization: Organization = Depends(get_current_organization), db: Session = Depends(get_db)) -> list[AnalyticsEventRead]:
+    return _service.list_events(db, organization, source=source)
 
 
 @router.get("/transactions", response_model=TransactionPage)

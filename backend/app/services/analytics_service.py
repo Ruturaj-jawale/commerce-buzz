@@ -75,25 +75,43 @@ class AnalyticsService:
         payload = {"order_id": f"demo-{storefront.id}", "revenue": 42.0, "currency": "USD", "customer_id": "demo-customer", "items": [{"product_id": "demo-product", "name": "Demo product", "price": 42.0, "quantity": 1}]}
         return self.ingest(db, organization, storefront_id, CommerceEventIngest(payload=payload, event_name="purchase"))
 
-    def list_events(self, db: Session, organization: Organization, limit: int = 25) -> list[AnalyticsEventRead]:
-        rows = db.scalars(
-            select(AnalyticsEvent).where(AnalyticsEvent.organization_id == organization.id).order_by(AnalyticsEvent.id.desc()).limit(limit)
-        ).all()
+    def list_events(self, db: Session, organization: Organization, limit: int = 25, source: str | None = None) -> list[AnalyticsEventRead]:
+        stmt = select(AnalyticsEvent).where(AnalyticsEvent.organization_id == organization.id)
+        if source == "bank-statement":
+            stmt = stmt.where(AnalyticsEvent.provider == "bank-statement")
+        elif source == "commerce":
+            stmt = stmt.where(AnalyticsEvent.provider != "bank-statement")
+        elif source:
+            stmt = stmt.where(AnalyticsEvent.provider == source)
+        rows = db.scalars(stmt.order_by(AnalyticsEvent.id.desc()).limit(limit)).all()
         return [AnalyticsEventRead.model_validate(row) for row in rows]
 
-    def _events_for_range(self, db: Session, organization: Organization, start_date: date | None = None, end_date: date | None = None) -> list[AnalyticsEvent]:
+    def _events_for_range(self, db: Session, organization: Organization, start_date: date | None = None, end_date: date | None = None, source: str | None = None) -> list[AnalyticsEvent]:
         statement = select(AnalyticsEvent).where(AnalyticsEvent.organization_id == organization.id)
         if start_date:
             statement = statement.where(AnalyticsEvent.occurred_at >= datetime.combine(start_date, time.min))
         if end_date:
             statement = statement.where(AnalyticsEvent.occurred_at <= datetime.combine(end_date, time.max))
+        if source == "bank-statement":
+            statement = statement.where(AnalyticsEvent.provider == "bank-statement")
+        elif source == "commerce":
+            statement = statement.where(AnalyticsEvent.provider != "bank-statement")
+        elif source:
+            statement = statement.where(AnalyticsEvent.provider == source)
         return list(db.scalars(statement).all())
 
-    def summary(self, db: Session, organization: Organization, start_date: date | None = None, end_date: date | None = None) -> AnalyticsSummary:
+    def summary(self, db: Session, organization: Organization, start_date: date | None = None, end_date: date | None = None, source: str | None = None) -> AnalyticsSummary:
         if start_date and end_date and start_date > end_date:
             raise HTTPException(status_code=422, detail="start_date must be on or before end_date")
-        storefronts = db.scalars(select(Storefront).where(Storefront.organization_id == organization.id)).all()
-        events = self._events_for_range(db, organization, start_date, end_date)
+        stmt_sf = select(Storefront).where(Storefront.organization_id == organization.id)
+        if source == "bank-statement":
+            stmt_sf = stmt_sf.where(Storefront.provider == "bank-statement")
+        elif source == "commerce":
+            stmt_sf = stmt_sf.where(Storefront.provider != "bank-statement")
+        elif source:
+            stmt_sf = stmt_sf.where(Storefront.provider == source)
+        storefronts = db.scalars(stmt_sf).all()
+        events = self._events_for_range(db, organization, start_date, end_date, source=source)
         grouped: dict[str, dict[str, float | int]] = defaultdict(
             lambda: {"storefronts": 0, "events": 0, "purchases": 0, "revenue": 0.0}
         )
@@ -126,11 +144,11 @@ class AnalyticsService:
             by_source=breakdown,
         )
 
-    def top_products(self, db: Session, organization: Organization, start_date: date | None = None, end_date: date | None = None, limit: int = 10) -> list[ProductMetric]:
+    def top_products(self, db: Session, organization: Organization, start_date: date | None = None, end_date: date | None = None, limit: int = 10, source: str | None = None) -> list[ProductMetric]:
         if start_date and end_date and start_date > end_date:
             raise HTTPException(status_code=422, detail="start_date must be on or before end_date")
         totals: dict[tuple[str | None, str], dict[str, float | int]] = defaultdict(lambda: {"units_sold": 0, "revenue": 0.0})
-        for event in self._events_for_range(db, organization, start_date, end_date):
+        for event in self._events_for_range(db, organization, start_date, end_date, source=source):
             if event.event_name != "purchase":
                 continue
             properties = json.loads(event.properties_json)
@@ -148,8 +166,8 @@ class AnalyticsService:
             for (product_id, name), values in sorted(totals.items(), key=lambda item: float(item[1]["revenue"]), reverse=True)[:limit]
         ]
 
-    def customer_metrics(self, db: Session, organization: Organization, start_date: date | None = None, end_date: date | None = None) -> CustomerMetrics:
-        purchases = [event for event in self._events_for_range(db, organization, start_date, end_date) if event.event_name == "purchase"]
+    def customer_metrics(self, db: Session, organization: Organization, start_date: date | None = None, end_date: date | None = None, source: str | None = None) -> CustomerMetrics:
+        purchases = [event for event in self._events_for_range(db, organization, start_date, end_date, source=source) if event.event_name == "purchase"]
         customer_ids = {
             str(json.loads(event.properties_json).get("customer_id"))
             for event in purchases
@@ -158,15 +176,15 @@ class AnalyticsService:
         revenue = round(sum(event.revenue for event in purchases), 2)
         return CustomerMetrics(customers=len(customer_ids), orders=len(purchases), revenue=revenue, average_order_value=round(revenue / len(purchases), 2) if purchases else 0.0)
 
-    def refund_summary(self, db: Session, organization: Organization, start_date: date | None = None, end_date: date | None = None) -> RefundSummary:
-        events = self._events_for_range(db, organization, start_date, end_date)
+    def refund_summary(self, db: Session, organization: Organization, start_date: date | None = None, end_date: date | None = None, source: str | None = None) -> RefundSummary:
+        events = self._events_for_range(db, organization, start_date, end_date, source=source)
         purchases = [event for event in events if event.event_name == "purchase"]
         refunds = [event for event in events if event.event_name == "refund"]
         refunded_amount = round(sum(event.revenue for event in refunds), 2)
         return RefundSummary(refunds=len(refunds), refunded_amount=refunded_amount, refund_rate=round(len(refunds) / len(purchases), 4) if purchases else 0.0)
 
-    def payment_metrics(self, db: Session, organization: Organization, start_date: date | None = None, end_date: date | None = None) -> PaymentMetrics:
-        events = self._events_for_range(db, organization, start_date, end_date)
+    def payment_metrics(self, db: Session, organization: Organization, start_date: date | None = None, end_date: date | None = None, source: str | None = None) -> PaymentMetrics:
+        events = self._events_for_range(db, organization, start_date, end_date, source=source)
         attempted = [event for event in events if event.event_name == "payment_attempted"]
         succeeded = [event for event in events if event.event_name in {"payment_succeeded", "purchase"}]
         failed = [event for event in events if event.event_name == "payment_failed"]
@@ -182,8 +200,8 @@ class AnalyticsService:
             failed_amount=failed_amount,
         )
 
-    def payment_recovery(self, db: Session, organization: Organization, start_date: date | None = None, end_date: date | None = None) -> RecoveryMetrics:
-        events = self._events_for_range(db, organization, start_date, end_date)
+    def payment_recovery(self, db: Session, organization: Organization, start_date: date | None = None, end_date: date | None = None, source: str | None = None) -> RecoveryMetrics:
+        events = self._events_for_range(db, organization, start_date, end_date, source=source)
         attempted = [event for event in events if event.event_name == "recovery_attempted"]
         succeeded = [event for event in events if event.event_name == "recovery_succeeded"]
         failed = [event for event in events if event.event_name == "payment_failed"]
@@ -224,9 +242,14 @@ class AnalyticsService:
         currency: str | None = None, source: str | None = None, page: int = 1, page_size: int = 25,
     ) -> TransactionPage:
         """Return presentation rows from normalized events without exposing SQL or raw payloads."""
-        rows = list(db.scalars(
-            select(AnalyticsEvent).where(AnalyticsEvent.organization_id == organization.id).order_by(AnalyticsEvent.occurred_at.desc(), AnalyticsEvent.id.desc())
-        ).all())
+        stmt = select(AnalyticsEvent).where(AnalyticsEvent.organization_id == organization.id)
+        if source == "bank-statement":
+            stmt = stmt.where(AnalyticsEvent.provider == "bank-statement")
+        elif source == "commerce":
+            stmt = stmt.where(AnalyticsEvent.provider != "bank-statement")
+        elif source:
+            stmt = stmt.where(AnalyticsEvent.provider == source)
+        rows = list(db.scalars(stmt.order_by(AnalyticsEvent.occurred_at.desc(), AnalyticsEvent.id.desc())).all())
         mapped: list[TransactionRead] = []
         for event in rows:
             properties = json.loads(event.properties_json)
@@ -246,16 +269,14 @@ class AnalyticsService:
                 continue
             if currency and row.currency.upper() != currency.upper():
                 continue
-            if source and row.source != source:
-                continue
             mapped.append(row)
         page = max(page, 1)
         page_size = min(max(page_size, 1), 100)
         start = (page - 1) * page_size
         return TransactionPage(items=mapped[start:start + page_size], total=len(mapped), page=page, page_size=page_size)
 
-    def order_metrics(self, db: Session, organization: Organization, start_date: date | None = None, end_date: date | None = None) -> dict[str, int | float]:
-        events = self._events_for_range(db, organization, start_date, end_date)
+    def order_metrics(self, db: Session, organization: Organization, start_date: date | None = None, end_date: date | None = None, source: str | None = None) -> dict[str, int | float]:
+        events = self._events_for_range(db, organization, start_date, end_date, source=source)
         created = [event for event in events if event.event_name in {"order_created", "purchase"}]
         return {
             "orders": len({event.order_id or event.id for event in created}),

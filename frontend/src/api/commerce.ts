@@ -99,42 +99,53 @@ export function connectStorefront(payload: {
   return postJson<Storefront>("/api/commerce-sources", payload);
 }
 
-export function fetchAnalyticsSummary(): Promise<AnalyticsSummary> {
-  return getJson<AnalyticsSummary>("/api/analytics/summary");
+export function fetchAnalyticsSummary(source?: string): Promise<AnalyticsSummary> {
+  const q = source ? `?source=${encodeURIComponent(source)}` : "";
+  return getJson<AnalyticsSummary>(`/api/analytics/summary${q}`);
 }
 
-export function fetchAnalyticsEvents(): Promise<AnalyticsEvent[]> {
-  return getJson<AnalyticsEvent[]>("/api/analytics/events");
+export function fetchAnalyticsEvents(source?: string): Promise<AnalyticsEvent[]> {
+  const q = source ? `?source=${encodeURIComponent(source)}` : "";
+  return getJson<AnalyticsEvent[]>(`/api/analytics/events${q}`);
 }
 
-export function fetchTopProducts(limit = 10): Promise<ProductMetric[]> {
-  return getJson<ProductMetric[]>(`/api/analytics/top-products?limit=${limit}`);
+export function fetchTopProducts(limit = 10, source?: string): Promise<ProductMetric[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (source) params.set("source", source);
+  return getJson<ProductMetric[]>(`/api/analytics/top-products?${params.toString()}`);
 }
 
-export function fetchCustomerMetrics(): Promise<CustomerMetrics> {
-  return getJson<CustomerMetrics>("/api/analytics/customer-metrics");
+export function fetchCustomerMetrics(source?: string): Promise<CustomerMetrics> {
+  const q = source ? `?source=${encodeURIComponent(source)}` : "";
+  return getJson<CustomerMetrics>(`/api/analytics/customer-metrics${q}`);
 }
 
-export function fetchRefundSummary(): Promise<RefundSummary> {
-  return getJson<RefundSummary>("/api/analytics/refund-summary");
+export function fetchRefundSummary(source?: string): Promise<RefundSummary> {
+  const q = source ? `?source=${encodeURIComponent(source)}` : "";
+  return getJson<RefundSummary>(`/api/analytics/refund-summary${q}`);
 }
 
-export function fetchPaymentMetrics(): Promise<PaymentMetrics> {
-  return getJson<PaymentMetrics>("/api/analytics/payment-metrics");
+export function fetchPaymentMetrics(source?: string): Promise<PaymentMetrics> {
+  const q = source ? `?source=${encodeURIComponent(source)}` : "";
+  return getJson<PaymentMetrics>(`/api/analytics/payment-metrics${q}`);
 }
 
-export function fetchPaymentRecovery(): Promise<RecoveryMetrics> {
-  return getJson<RecoveryMetrics>("/api/analytics/payment-recovery");
+export function fetchPaymentRecovery(source?: string): Promise<RecoveryMetrics> {
+  const q = source ? `?source=${encodeURIComponent(source)}` : "";
+  return getJson<RecoveryMetrics>(`/api/analytics/payment-recovery${q}`);
 }
 
 export function fetchRevenueAtRisk(): Promise<RevenueAtRisk> {
   return getJson<RevenueAtRisk>("/api/analytics/revenue-at-risk");
 }
 
-export function fetchTransactions(filters: { query?: string; status?: string } = {}): Promise<TransactionPage> {
+export function fetchTransactions(filters: { query?: string; status?: string; source?: string } = {}): Promise<TransactionPage> {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => value && params.set(key, value));
   return getJson<TransactionPage>(`/api/analytics/transactions?${params.toString()}`);
 }
 
-export function transactionExportUrl(): string { return `${getApiUrl()}/api/analytics/transactions/export`; }
+export function transactionExportUrl(source?: string): string {
+  const q = source ? `?source=${encodeURIComponent(source)}` : "";
+  return `${getApiUrl()}/api/analytics/transactions/export${q}`;
+}
