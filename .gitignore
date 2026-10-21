@@ -39,12 +39,21 @@ Thumbs.db
 *.swp
 
 # Folders excluded per user request
-skills/
-agents/
 tools/
+skills/
+skill/
+sample-data/
+sample data/
+sample_data/
+agents/
+.agents/
 docs/
 
-# Security and Risk markdown files
+# Excluded documentation and agent/security files
+AGENTS.md
+SECURITY.md
+[SECURITY.md]
+\[SECURITY.md\]
 [Ss][Ee][Cc][Uu][Rr][Ii][Tt][Yy]*.md
 *[Ss][Ee][Cc][Uu][Rr][Ii][Tt][Yy]*.md
 [Rr][Ii][Ss][Kk]*.md
