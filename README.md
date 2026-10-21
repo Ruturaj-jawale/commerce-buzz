@@ -4,8 +4,6 @@
 [![React](https://img.shields.io/badge/React-18.3+-61DAFB.svg?style=flat&logo=React&logoColor=black)](https://react.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6+-3178C6.svg?style=flat&logo=TypeScript&logoColor=white)](https://www.typescriptlang.org)
 [![Model Context Protocol](https://img.shields.io/badge/MCP-2024--11--05-8A2BE2.svg?style=flat)](https://modelcontextprotocol.io)
-[![PCI-DSS 3.4](https://img.shields.io/badge/Compliance-PCI--DSS_3.4_Zero--Trust-success.svg)](https://www.pcisecuritystandards.org)
-[![Tests](https://img.shields.io/badge/Tests-69%2F69_Passing-brightgreen.svg)](tests/backend)
 
 **SaaS MCP** is a multi-tenant, provider-neutral financial analytics and transaction intelligence platform. It bridges two critical financial domains onto a single universal data model:
 1. **Digital Commerce Intelligence**: Order tracking, SKU performance, abandoned checkout dunning, customer retention, and revenue-recovery analytics.
