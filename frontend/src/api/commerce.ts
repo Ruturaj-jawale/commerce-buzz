@@ -104,9 +104,10 @@ export function fetchAnalyticsSummary(source?: string): Promise<AnalyticsSummary
   return getJson<AnalyticsSummary>(`/api/analytics/summary${q}`);
 }
 
-export function fetchAnalyticsEvents(source?: string): Promise<AnalyticsEvent[]> {
-  const q = source ? `?source=${encodeURIComponent(source)}` : "";
-  return getJson<AnalyticsEvent[]>(`/api/analytics/events${q}`);
+export function fetchAnalyticsEvents(source?: string, limit = 250): Promise<AnalyticsEvent[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (source) params.set("source", source);
+  return getJson<AnalyticsEvent[]>(`/api/analytics/events?${params.toString()}`);
 }
 
 export function fetchTopProducts(limit = 10, source?: string): Promise<ProductMetric[]> {

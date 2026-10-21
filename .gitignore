@@ -19,6 +19,7 @@ htmlcov/
 
 # Databases
 *.db
+*.db*
 *.sqlite
 *.sqlite3
 
@@ -37,10 +38,19 @@ Thumbs.db
 .vscode/
 *.swp
 
-# Intermediate/individual markdown files excluded from Git (per master specification consolidation)
-RISK_ARCHITECTURE.md
-RISK_ASSESSMENT_TASKS.md
-RISK_PROGRESS.md
+# Folders excluded per user request
+skills/
+agents/
+tools/
+docs/
+
+# Security and Risk markdown files
+[Ss][Ee][Cc][Uu][Rr][Ii][Tt][Yy]*.md
+*[Ss][Ee][Cc][Uu][Rr][Ii][Tt][Yy]*.md
+[Rr][Ii][Ss][Kk]*.md
+*[Rr][Ii][Ss][Kk]*.md
+
+# Intermediate/individual markdown files excluded from Git
 INTEGRATION_GUIDE.md
 PROGRESS.md
 CHANGELOG.md

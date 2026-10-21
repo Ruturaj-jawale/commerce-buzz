@@ -68,8 +68,8 @@ def revenue_at_risk(organization: Organization = Depends(get_current_organizatio
 
 
 @router.get("/events", response_model=list[AnalyticsEventRead])
-def analytics_events(source: str | None = None, organization: Organization = Depends(get_current_organization), db: Session = Depends(get_db)) -> list[AnalyticsEventRead]:
-    return _service.list_events(db, organization, source=source)
+def analytics_events(limit: int = 250, source: str | None = None, organization: Organization = Depends(get_current_organization), db: Session = Depends(get_db)) -> list[AnalyticsEventRead]:
+    return _service.list_events(db, organization, limit=limit, source=source)
 
 
 @router.get("/transactions", response_model=TransactionPage)

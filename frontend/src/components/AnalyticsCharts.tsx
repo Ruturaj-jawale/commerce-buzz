@@ -7,6 +7,7 @@ import type {
   RevenueAtRisk,
   SourceBreakdown,
 } from "../api/commerce";
+import type { RiskAssessmentSummary } from "../api/risk";
 
 // ── 1. Revenue & Orders Timeline Chart ──────────────────────────────────────
 export function RevenueTimelineChart({
@@ -439,7 +440,7 @@ export function PaymentRecoveryWidget({
   );
 }
 
-// ── 6. Statement Cash Flow Trend Chart (Dual-flow Inflow / Outflow) ─────────
+// ── 6. Statement Cash Flow Trend Chart (Dual-flow Inflow / Outflow & Net Liquidity) ─
 export function StatementCashFlowChart({
   events,
   currency = "INR",
@@ -447,19 +448,20 @@ export function StatementCashFlowChart({
   events: AnalyticsEvent[];
   currency?: string;
 }) {
-  const [metric, setMetric] = useState<"volume" | "count">("volume");
+  const [metric, setMetric] = useState<"volume" | "count" | "net">("volume");
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
 
   const timeline = useMemo(() => {
     const map = new Map<
       string,
-      { date: string; debitVol: number; creditVol: number; debitCount: number; creditCount: number }
+      { date: string; debitVol: number; creditVol: number; debitCount: number; creditCount: number; netVol: number }
     >();
 
     const sorted = [...events].sort(
       (a, b) => new Date(a.occurred_at).getTime() - new Date(b.occurred_at).getTime(),
     );
 
+    let running = 0;
     for (const ev of sorted) {
       const d = ev.occurred_at.slice(0, 10);
       const curr = map.get(d) ?? {
@@ -468,15 +470,19 @@ export function StatementCashFlowChart({
         creditVol: 0,
         debitCount: 0,
         creditCount: 0,
+        netVol: 0,
       };
 
       if (ev.event_name === "refund") {
         curr.creditVol += ev.revenue;
         curr.creditCount += 1;
+        running += ev.revenue;
       } else {
         curr.debitVol += ev.revenue;
         curr.debitCount += 1;
+        running -= ev.revenue;
       }
+      curr.netVol = running;
       map.set(d, curr);
     }
     return Array.from(map.values());
@@ -484,7 +490,8 @@ export function StatementCashFlowChart({
 
   const maxDebit = Math.max(...timeline.map((d) => (metric === "volume" ? d.debitVol : d.debitCount)), 10);
   const maxCredit = Math.max(...timeline.map((d) => (metric === "volume" ? d.creditVol : d.creditCount)), 10);
-  const maxVal = Math.max(maxDebit, maxCredit, 10);
+  const maxNet = Math.max(...timeline.map((d) => Math.abs(d.netVol)), 10);
+  const maxVal = metric === "net" ? maxNet : Math.max(maxDebit, maxCredit, 10);
 
   const chartHeight = 200;
   const chartWidth = 540;
@@ -501,11 +508,13 @@ export function StatementCashFlowChart({
     const creditVal = metric === "volume" ? d.creditVol : d.creditCount;
     const debitY = padTop + innerH - (debitVal / maxVal) * innerH;
     const creditY = padTop + innerH - (creditVal / maxVal) * innerH;
-    return { ...d, x, debitY, creditY, debitVal, creditVal };
+    const netY = padTop + innerH / 2 - (d.netVol / (maxVal * 2 || 1)) * innerH;
+    return { ...d, x, debitY, creditY, netY, debitVal, creditVal };
   });
 
   const debitLine = points.map((p) => `${p.x},${p.debitY}`).join(" ");
   const creditLine = points.map((p) => `${p.x},${p.creditY}`).join(" ");
+  const netLine = points.map((p) => `${p.x},${p.netY}`).join(" ");
 
   const debitArea =
     points.length > 0
@@ -521,14 +530,27 @@ export function StatementCashFlowChart({
         },${padTop + innerH} Z`
       : "";
 
+  const netArea =
+    points.length > 0
+      ? `M ${points[0].x},${padTop + innerH / 2} L ${points.map((p) => `${p.x},${p.netY}`).join(" L ")} L ${
+          points[points.length - 1].x
+        },${padTop + innerH / 2} Z`
+      : "";
+
   return (
     <div className="panel chart-panel">
       <div className="chart-header">
         <div>
           <h3>Statement Cash Flow Trajectory</h3>
           <p className="muted">
-            <span style={{ color: "#4ade80", fontWeight: 600 }}>● Deposits (Credits)</span> vs{" "}
-            <span style={{ color: "#f87171", fontWeight: 600 }}>● Withdrawals (Debits)</span>
+            {metric === "net" ? (
+              <span style={{ color: "#38bdf8", fontWeight: 600 }}>● Running Cumulative Cash Position</span>
+            ) : (
+              <>
+                <span style={{ color: "#4ade80", fontWeight: 600 }}>● Deposits (Credits)</span> vs{" "}
+                <span style={{ color: "#f87171", fontWeight: 600 }}>● Withdrawals (Debits)</span>
+              </>
+            )}
           </p>
         </div>
         <div className="chart-toggles">
@@ -544,7 +566,14 @@ export function StatementCashFlowChart({
             className={`pill-btn ${metric === "count" ? "active" : ""}`}
             onClick={() => setMetric("count")}
           >
-            Transactions (#)
+            Count (#)
+          </button>
+          <button
+            type="button"
+            className={`pill-btn ${metric === "net" ? "active" : ""}`}
+            onClick={() => setMetric("net")}
+          >
+            Net Liquidity
           </button>
         </div>
       </div>
@@ -565,13 +594,19 @@ export function StatementCashFlowChart({
                 <stop offset="0%" stopColor="#f87171" stopOpacity="0.35" />
                 <stop offset="100%" stopColor="#f87171" stopOpacity="0.0" />
               </linearGradient>
+              <linearGradient id="netGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.3" />
+                <stop offset="100%" stopColor="#38bdf8" stopOpacity="0.0" />
+              </linearGradient>
             </defs>
 
             {/* Grid lines */}
             {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
               const y = padTop + innerH * (1 - ratio);
               const labelVal =
-                metric === "volume" ? `${Math.round(maxVal * ratio)}` : Math.round(maxVal * ratio);
+                metric === "net"
+                  ? `${Math.round(maxVal * (ratio * 2 - 1))}`
+                  : `${Math.round(maxVal * ratio)}`;
               return (
                 <g key={ratio}>
                   <line
@@ -589,72 +624,106 @@ export function StatementCashFlowChart({
               );
             })}
 
-            {/* Area Fills */}
-            {creditArea && <path d={creditArea} fill="url(#creditGrad)" />}
-            {debitArea && <path d={debitArea} fill="url(#debitGrad)" />}
-
-            {/* Trend Lines */}
-            {creditLine && (
-              <polyline
-                fill="none"
-                stroke="#4ade80"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                points={creditLine}
-              />
-            )}
-            {debitLine && (
-              <polyline
-                fill="none"
-                stroke="#f87171"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                points={debitLine}
-              />
-            )}
-
-            {/* Data Dots & X Axis Labels */}
-            {points.map((p, i) => (
-              <g
-                key={p.date}
-                onMouseEnter={() => setHoveredIdx(i)}
-                onMouseLeave={() => setHoveredIdx(null)}
-              >
-                <circle
-                  cx={p.x}
-                  cy={p.creditY}
-                  r={hoveredIdx === i ? 6 : 3.5}
-                  fill={hoveredIdx === i ? "#fff" : "#4ade80"}
-                  stroke="#0b1020"
-                  strokeWidth="2"
-                  style={{ cursor: "pointer", transition: "r 0.15s ease" }}
-                />
-                <circle
-                  cx={p.x}
-                  cy={p.debitY}
-                  r={hoveredIdx === i ? 6 : 3.5}
-                  fill={hoveredIdx === i ? "#fff" : "#f87171"}
-                  stroke="#0b1020"
-                  strokeWidth="2"
-                  style={{ cursor: "pointer", transition: "r 0.15s ease" }}
-                />
-                {(timeline.length <= 8 ||
-                  i % Math.ceil(timeline.length / 6) === 0 ||
-                  i === timeline.length - 1) && (
-                  <text
-                    x={p.x}
-                    y={padTop + innerH + 18}
-                    textAnchor="middle"
-                    fontSize="9"
-                    fill="#94a3b8"
-                  >
-                    {p.date.slice(5)}
-                  </text>
+            {metric === "net" ? (
+              <>
+                {netArea && <path d={netArea} fill="url(#netGrad)" />}
+                {netLine && (
+                  <polyline
+                    fill="none"
+                    stroke="#38bdf8"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    points={netLine}
+                  />
                 )}
-              </g>
-            ))}
+                {points.map((p, i) => (
+                  <circle
+                    key={p.date}
+                    cx={p.x}
+                    cy={p.netY}
+                    r={hoveredIdx === i ? 6 : 3.5}
+                    fill={hoveredIdx === i ? "#fff" : "#38bdf8"}
+                    stroke="#0b1020"
+                    strokeWidth="2"
+                    onMouseEnter={() => setHoveredIdx(i)}
+                    onMouseLeave={() => setHoveredIdx(null)}
+                    style={{ cursor: "pointer", transition: "r 0.15s ease" }}
+                  />
+                ))}
+              </>
+            ) : (
+              <>
+                {creditArea && <path d={creditArea} fill="url(#creditGrad)" />}
+                {debitArea && <path d={debitArea} fill="url(#debitGrad)" />}
+
+                {creditLine && (
+                  <polyline
+                    fill="none"
+                    stroke="#4ade80"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    points={creditLine}
+                  />
+                )}
+                {debitLine && (
+                  <polyline
+                    fill="none"
+                    stroke="#f87171"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    points={debitLine}
+                  />
+                )}
+
+                {points.map((p, i) => (
+                  <g
+                    key={p.date}
+                    onMouseEnter={() => setHoveredIdx(i)}
+                    onMouseLeave={() => setHoveredIdx(null)}
+                  >
+                    <circle
+                      cx={p.x}
+                      cy={p.creditY}
+                      r={hoveredIdx === i ? 6 : 3.5}
+                      fill={hoveredIdx === i ? "#fff" : "#4ade80"}
+                      stroke="#0b1020"
+                      strokeWidth="2"
+                      style={{ cursor: "pointer", transition: "r 0.15s ease" }}
+                    />
+                    <circle
+                      cx={p.x}
+                      cy={p.debitY}
+                      r={hoveredIdx === i ? 6 : 3.5}
+                      fill={hoveredIdx === i ? "#fff" : "#f87171"}
+                      stroke="#0b1020"
+                      strokeWidth="2"
+                      style={{ cursor: "pointer", transition: "r 0.15s ease" }}
+                    />
+                  </g>
+                ))}
+              </>
+            )}
+
+            {/* X-axis date labels */}
+            {points.map((p, i) =>
+              timeline.length <= 8 ||
+              i % Math.ceil(timeline.length / 6) === 0 ||
+              i === timeline.length - 1 ? (
+                <text
+                  key={`lbl-${p.date}`}
+                  x={p.x}
+                  y={padTop + innerH + 18}
+                  textAnchor="middle"
+                  fontSize="9"
+                  fill="#94a3b8"
+                >
+                  {p.date.slice(5)}
+                </text>
+              ) : null
+            )}
           </svg>
 
           {hoveredIdx !== null && points[hoveredIdx] && (
@@ -667,7 +736,7 @@ export function StatementCashFlowChart({
                 Withdrawals: {currency} {points[hoveredIdx].debitVol.toFixed(2)} ({points[hoveredIdx].debitCount} txns)
               </div>
               <div style={{ borderTop: "1px solid #334155", marginTop: "4px", paddingTop: "4px", color: "#38bdf8" }}>
-                Net Flow: {currency} {(points[hoveredIdx].creditVol - points[hoveredIdx].debitVol).toFixed(2)}
+                Running Balance: {currency} {points[hoveredIdx].netVol.toFixed(2)}
               </div>
             </div>
           )}
@@ -693,14 +762,30 @@ export function BankingRailRiskChart({
   }>;
   currency?: string;
 }) {
+  const totalVolume = channelBreakdown.reduce((sum, c) => sum + c.total_volume, 0);
+  const totalTxns = channelBreakdown.reduce((sum, c) => sum + c.total_transactions, 0);
   const maxVolume = Math.max(...channelBreakdown.map((c) => c.total_volume), 1);
+
+  const channelColors: Record<string, string> = {
+    UPI: "#8b5cf6",
+    ATM: "#3b82f6",
+    CARD_SWIPE: "#06b6d4",
+    FEE: "#64748b",
+    OTHER: "#ec4899",
+    NET_BANKING: "#10b981",
+  };
+
+  // Donut circumference for r=38: 2 * Math.PI * 38 = 238.761
+  const r = 38;
+  const circ = 2 * Math.PI * r;
+  let accumulatedRatio = 0;
 
   return (
     <div className="panel chart-panel">
       <div className="chart-header">
         <div>
           <h3>Payment Rail Reliability &amp; Failure Rates</h3>
-          <p className="muted">Channel volume share vs return &amp; failure velocity</p>
+          <p className="muted">Volume distribution and failure rates across rails</p>
         </div>
       </div>
 
@@ -709,100 +794,177 @@ export function BankingRailRiskChart({
           No channel metrics recorded yet. Import statements to populate rail metrics.
         </p>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-          {channelBreakdown.map((ch) => {
-            const volPct = Math.max((ch.total_volume / maxVolume) * 100, 4);
-            const isHighRisk = ch.failure_rate_percentage >= 20;
-            const isElevated = ch.failure_rate_percentage >= 10 && ch.failure_rate_percentage < 20;
-
-            const badgeColor = isHighRisk ? "#ef4444" : isElevated ? "#f59e0b" : "#10b981";
-            const badgeBg = isHighRisk
-              ? "rgba(239, 68, 68, 0.15)"
-              : isElevated
-              ? "rgba(245, 158, 11, 0.15)"
-              : "rgba(16, 185, 129, 0.15)";
-
-            return (
+        <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+          {/* SVG Donut Visual Representation */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "1.5rem",
+              background: "#090d16",
+              padding: "1rem",
+              borderRadius: "10px",
+              border: "1px solid #1e293b",
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ position: "relative", width: "110px", height: "110px", flexShrink: 0, margin: "0 auto" }}>
+              <svg viewBox="0 0 100 100" width="110" height="110" style={{ transform: "rotate(-90deg)" }}>
+                <circle cx="50" cy="50" r={r} fill="transparent" stroke="#1e293b" strokeWidth="14" />
+                {channelBreakdown.map((ch) => {
+                  const fraction = totalVolume > 0 ? ch.total_volume / totalVolume : 0;
+                  const dash = fraction * circ;
+                  const offset = accumulatedRatio * circ;
+                  accumulatedRatio += fraction;
+                  const color = channelColors[ch.channel] ?? "#f59e0b";
+                  return (
+                    <circle
+                      key={`donut-${ch.channel}`}
+                      cx="50"
+                      cy="50"
+                      r={r}
+                      fill="transparent"
+                      stroke={color}
+                      strokeWidth="14"
+                      strokeDasharray={`${dash} ${circ}`}
+                      strokeDashoffset={-offset}
+                      style={{ transition: "stroke-dasharray 0.3s ease" }}
+                    />
+                  );
+                })}
+              </svg>
               <div
-                key={ch.channel}
                 style={{
-                  background: "#0f172a",
-                  border: "1px solid #1e293b",
-                  borderRadius: "8px",
-                  padding: "0.85rem 1rem",
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  height: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  pointerEvents: "none",
                 }}
               >
+                <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "#f8fafc" }}>
+                  {totalVolume >= 1000 ? `${(totalVolume / 1000).toFixed(1)}k` : totalVolume.toFixed(0)}
+                </span>
+                <span style={{ fontSize: "0.68rem", color: "#94a3b8" }}>{totalTxns} txns</span>
+              </div>
+            </div>
+
+            {/* Donut Legend */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "0.5rem", flex: 1 }}>
+              {channelBreakdown.map((ch) => {
+                const color = channelColors[ch.channel] ?? "#f59e0b";
+                const sharePct = totalVolume > 0 ? (ch.total_volume / totalVolume) * 100 : 0;
+                return (
+                  <div key={`legend-${ch.channel}`} style={{ display: "flex", alignItems: "center", gap: "0.45rem", fontSize: "0.78rem" }}>
+                    <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: color, flexShrink: 0 }} />
+                    <span style={{ color: "#cbd5e1", fontWeight: 500 }}>{ch.channel.replace("_", " ")}</span>
+                    <span style={{ color: "#94a3b8", marginLeft: "auto" }}>{sharePct.toFixed(1)}%</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Channel Cards with Failure & Reversal Velocity */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            {channelBreakdown.map((ch) => {
+              const volPct = Math.max((ch.total_volume / maxVolume) * 100, 4);
+              const isHighRisk = ch.failure_rate_percentage >= 20;
+              const isElevated = ch.failure_rate_percentage >= 10 && ch.failure_rate_percentage < 20;
+
+              const badgeColor = isHighRisk ? "#ef4444" : isElevated ? "#f59e0b" : "#10b981";
+              const badgeBg = isHighRisk
+                ? "rgba(239, 68, 68, 0.15)"
+                : isElevated
+                ? "rgba(245, 158, 11, 0.15)"
+                : "rgba(16, 185, 129, 0.15)";
+
+              return (
                 <div
+                  key={ch.channel}
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    marginBottom: "0.4rem",
-                    flexWrap: "wrap",
-                    gap: "0.5rem",
+                    background: "#0f172a",
+                    border: "1px solid #1e293b",
+                    borderRadius: "8px",
+                    padding: "0.75rem 1rem",
                   }}
                 >
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                    <span style={{ fontSize: "1.1rem" }}>
-                      {ch.channel === "UPI"
-                        ? "📱"
-                        : ch.channel === "ATM"
-                        ? "🏧"
-                        : ch.channel === "CARD_SWIPE"
-                        ? "💳"
-                        : "🏦"}
-                    </span>
-                    <strong style={{ color: "#f8fafc" }}>{ch.channel.replace("_", " ")}</strong>
-                    <span style={{ fontSize: "0.78rem", color: "#94a3b8" }}>
-                      ({ch.total_transactions} txns)
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginBottom: "0.35rem",
+                      flexWrap: "wrap",
+                      gap: "0.5rem",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <span style={{ fontSize: "1.05rem" }}>
+                        {ch.channel === "UPI"
+                          ? "📱"
+                          : ch.channel === "ATM"
+                          ? "🏧"
+                          : ch.channel === "CARD_SWIPE"
+                          ? "💳"
+                          : "🏦"}
+                      </span>
+                      <strong style={{ color: "#f8fafc", fontSize: "0.88rem" }}>{ch.channel.replace("_", " ")}</strong>
+                      <span style={{ fontSize: "0.76rem", color: "#94a3b8" }}>
+                        ({ch.total_transactions} txns)
+                      </span>
+                    </div>
+
+                    <span
+                      style={{
+                        background: badgeBg,
+                        color: badgeColor,
+                        padding: "0.15rem 0.5rem",
+                        borderRadius: "6px",
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {ch.failure_rate_percentage.toFixed(1)}% Decline Rate
                     </span>
                   </div>
 
-                  <span
+                  <div className="progress-bg" style={{ height: "6px" }}>
+                    <div
+                      className="progress-fill"
+                      style={{
+                        width: `${volPct}%`,
+                        background: `linear-gradient(90deg, #8b5cf6, #3b82f6)`,
+                      }}
+                    />
+                  </div>
+
+                  <div
                     style={{
-                      background: badgeBg,
-                      color: badgeColor,
-                      padding: "0.2rem 0.55rem",
-                      borderRadius: "6px",
+                      display: "flex",
+                      justifyContent: "space-between",
                       fontSize: "0.78rem",
-                      fontWeight: 600,
+                      color: "#94a3b8",
+                      marginTop: "0.35rem",
                     }}
                   >
-                    {ch.failure_rate_percentage.toFixed(1)}% Decline Rate
-                  </span>
+                    <span>
+                      Vol: {currency} {ch.total_volume.toFixed(2)}
+                    </span>
+                    <span>
+                      {ch.failed_transactions} failed · {ch.returned_transactions} reversed ({currency}{" "}
+                      {ch.failed_volume.toFixed(2)})
+                    </span>
+                  </div>
                 </div>
-
-                {/* Progress bar representing volume */}
-                <div className="progress-bg" style={{ height: "8px" }}>
-                  <div
-                    className="progress-fill"
-                    style={{
-                      width: `${volPct}%`,
-                      background: `linear-gradient(90deg, #8b5cf6, #3b82f6)`,
-                    }}
-                  />
-                </div>
-
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    fontSize: "0.8rem",
-                    color: "#94a3b8",
-                    marginTop: "0.45rem",
-                  }}
-                >
-                  <span>
-                    Volume: {currency} {ch.total_volume.toFixed(2)}
-                  </span>
-                  <span>
-                    {ch.failed_transactions} failed · {ch.returned_transactions} reversed ({currency}{" "}
-                    {ch.failed_volume.toFixed(2)})
-                  </span>
-                </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
@@ -817,6 +979,9 @@ export function StatementTicketSizeChart({
   events: AnalyticsEvent[];
   currency?: string;
 }) {
+  const [metric, setMetric] = useState<"count" | "volume">("count");
+  const [hoveredBand, setHoveredBand] = useState<string | null>(null);
+
   const buckets = useMemo(() => {
     const list = [
       { label: "< 200", debits: 0, credits: 0, debitVol: 0, creditVol: 0 },
@@ -847,7 +1012,12 @@ export function StatementTicketSizeChart({
     return list;
   }, [events]);
 
-  const maxCount = Math.max(...buckets.map((b) => Math.max(b.debits, b.credits)), 1);
+  const maxVal = Math.max(
+    ...buckets.map((b) =>
+      metric === "count" ? Math.max(b.debits, b.credits) : Math.max(b.debitVol, b.creditVol)
+    ),
+    1
+  );
 
   return (
     <div className="panel chart-panel">
@@ -859,21 +1029,52 @@ export function StatementTicketSizeChart({
             <span style={{ color: "#4ade80" }}>■ Credits</span> by denomination band
           </p>
         </div>
+        <div className="chart-toggles">
+          <button
+            type="button"
+            className={`pill-btn ${metric === "count" ? "active" : ""}`}
+            onClick={() => setMetric("count")}
+          >
+            Count (#)
+          </button>
+          <button
+            type="button"
+            className={`pill-btn ${metric === "volume" ? "active" : ""}`}
+            onClick={() => setMetric("volume")}
+          >
+            Volume ({currency})
+          </button>
+        </div>
       </div>
 
       <div className="histogram-grid">
         {buckets.map((b) => {
-          const debitHeightPct = Math.max((b.debits / maxCount) * 100, 3);
-          const creditHeightPct = Math.max((b.credits / maxCount) * 100, 3);
+          const debitVal = metric === "count" ? b.debits : b.debitVol;
+          const creditVal = metric === "count" ? b.credits : b.creditVol;
+          const debitHeightPct = Math.max((debitVal / maxVal) * 100, 3);
+          const creditHeightPct = Math.max((creditVal / maxVal) * 100, 3);
+          const isHovered = hoveredBand === b.label;
+
           return (
-            <div key={b.label} className="histogram-col">
-              <div style={{ display: "flex", gap: "2px", alignItems: "flex-end", height: "120px" }}>
+            <div
+              key={b.label}
+              className="histogram-col"
+              onMouseEnter={() => setHoveredBand(b.label)}
+              onMouseLeave={() => setHoveredBand(null)}
+              style={{
+                padding: "0.5rem 0.25rem",
+                borderRadius: "6px",
+                background: isHovered ? "rgba(255,255,255,0.03)" : "transparent",
+                transition: "background 0.15s ease",
+              }}
+            >
+              <div style={{ display: "flex", gap: "3px", alignItems: "flex-end", height: "120px" }}>
                 {/* Debit bar */}
                 <div
                   style={{
-                    width: "14px",
+                    width: "16px",
                     height: `${debitHeightPct}%`,
-                    background: "#f87171",
+                    background: "linear-gradient(180deg, #f87171 0%, #dc2626 100%)",
                     borderRadius: "3px 3px 0 0",
                   }}
                   title={`Debits: ${b.debits} txns (${currency} ${b.debitVol.toFixed(2)})`}
@@ -881,24 +1082,240 @@ export function StatementTicketSizeChart({
                 {/* Credit bar */}
                 <div
                   style={{
-                    width: "14px",
+                    width: "16px",
                     height: `${creditHeightPct}%`,
-                    background: "#4ade80",
+                    background: "linear-gradient(180deg, #4ade80 0%, #16a34a 100%)",
                     borderRadius: "3px 3px 0 0",
                   }}
                   title={`Credits: ${b.credits} txns (${currency} ${b.creditVol.toFixed(2)})`}
                 />
               </div>
-              <span className="hist-label" style={{ fontSize: "0.72rem" }}>
+              <span className="hist-label" style={{ fontSize: "0.74rem", fontWeight: 600 }}>
                 {b.label}
               </span>
-              <span style={{ fontSize: "0.68rem", color: "#64748b" }}>
-                {b.debits + b.credits} txns
+              <span style={{ fontSize: "0.68rem", color: "#94a3b8" }}>
+                {metric === "count"
+                  ? `${b.debits + b.credits} txns`
+                  : `${currency} ${(b.debitVol + b.creditVol).toFixed(0)}`}
               </span>
             </div>
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ── 9. Reversal Reconciliation & Settlement Flow Chart ──────────────────────
+export function ReversalReconciliationFlowChart({
+  bankRiskSummary,
+  currency = "INR",
+  onViewRisk,
+  onImport,
+}: {
+  bankRiskSummary: RiskAssessmentSummary | null;
+  currency?: string;
+  onViewRisk?: () => void;
+  onImport?: () => void;
+}) {
+  const total = bankRiskSummary?.total_transactions ?? 0;
+  const returned = bankRiskSummary?.returned_transactions ?? 0;
+  const failed = bankRiskSummary?.failed_transactions ?? 0;
+  const succeeded = bankRiskSummary?.successful_transactions ?? Math.max(total - returned - failed, 0);
+
+  const succPct = total > 0 ? (succeeded / total) * 100 : 0;
+  const retPct = total > 0 ? (returned / total) * 100 : 0;
+  const failPct = total > 0 ? (failed / total) * 100 : 0;
+
+  return (
+    <div className="panel chart-panel">
+      <div className="chart-header">
+        <div>
+          <h3>Automated Reversal Reconciliation Flow</h3>
+          <p className="muted">Dual-state RRN &amp; UTR settlement matching engine</p>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "1rem", marginTop: "0.5rem" }}>
+        {/* Multi-segment Settlement Progress Bar */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", color: "#94a3b8" }}>
+            <span>Settlement Breakdown · {currency} {(bankRiskSummary?.total_volume ?? 0).toFixed(2)}</span>
+            <span>{total} Total Transactions</span>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              height: "12px",
+              borderRadius: "6px",
+              overflow: "hidden",
+              background: "#1e293b",
+            }}
+          >
+            {succPct > 0 && (
+              <div
+                style={{ width: `${succPct}%`, background: "#10b981" }}
+                title={`Succeeded & Retained: ${succeeded} (${succPct.toFixed(1)}%)`}
+              />
+            )}
+            {retPct > 0 && (
+              <div
+                style={{ width: `${retPct}%`, background: "#f59e0b" }}
+                title={`Reconciled Reversals: ${returned} (${retPct.toFixed(1)}%)`}
+              />
+            )}
+            {failPct > 0 && (
+              <div
+                style={{ width: `${failPct}%`, background: "#ef4444" }}
+                title={`Failed / Unsettled: ${failed} (${failPct.toFixed(1)}%)`}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* 3 Metric Cards */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.5rem" }}>
+          <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px", padding: "0.6rem 0.75rem" }}>
+            <span style={{ fontSize: "0.72rem", color: "#94a3b8", display: "block" }}>Settled &amp; Paid</span>
+            <strong style={{ fontSize: "1.05rem", color: "#10b981" }}>{succeeded}</strong>
+            <small style={{ display: "block", color: "#64748b", fontSize: "0.68rem" }}>{succPct.toFixed(1)}%</small>
+          </div>
+          <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px", padding: "0.6rem 0.75rem" }}>
+            <span style={{ fontSize: "0.72rem", color: "#94a3b8", display: "block" }}>Auto-Reversals</span>
+            <strong style={{ fontSize: "1.05rem", color: "#f59e0b" }}>{returned}</strong>
+            <small style={{ display: "block", color: "#64748b", fontSize: "0.68rem" }}>RRN matched</small>
+          </div>
+          <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px", padding: "0.6rem 0.75rem" }}>
+            <span style={{ fontSize: "0.72rem", color: "#94a3b8", display: "block" }}>Unresolved</span>
+            <strong style={{ fontSize: "1.05rem", color: failed > 0 ? "#ef4444" : "#94a3b8" }}>{failed}</strong>
+            <small style={{ display: "block", color: "#64748b", fontSize: "0.68rem" }}>{failPct.toFixed(1)}%</small>
+          </div>
+        </div>
+
+        {/* Informative RRN Details Box */}
+        <div
+          style={{
+            background: "#090d16",
+            padding: "0.75rem 1rem",
+            borderRadius: "8px",
+            border: "1px solid #1e293b",
+            fontSize: "0.82rem",
+            color: "#cbd5e1",
+            lineHeight: 1.45,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.3rem" }}>
+            <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#10b981" }} />
+            <strong style={{ color: "#60a5fa" }}>RRN &amp; UTR Reconciliation Active</strong>
+          </div>
+          Reversal narrations (e.g. <em>FAILED TXN REFUND</em>) are auto-paired with original debits, ensuring no double counting.
+        </div>
+
+        {/* Quick Action Buttons */}
+        <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+          {onViewRisk && (
+            <button
+              type="button"
+              onClick={onViewRisk}
+              style={{
+                background: "linear-gradient(90deg, #7c3aed, #db2777)",
+                border: "none",
+                fontSize: "0.82rem",
+                padding: "0.5rem 0.85rem",
+              }}
+            >
+              🛡️ View Risk Assessment
+            </button>
+          )}
+          {onImport && (
+            <button
+              type="button"
+              onClick={onImport}
+              style={{ background: "#334155", border: "none", fontSize: "0.82rem", padding: "0.5rem 0.85rem" }}
+            >
+              📄 Import Statement
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 10. Top Statement Counterparties & Entities Chart ───────────────────────
+export function CounterpartyLeaderboardChart({
+  events = [],
+  currency = "INR",
+}: {
+  events: AnalyticsEvent[];
+  currency?: string;
+}) {
+  const topEntities = useMemo(() => {
+    const map = new Map<string, { name: string; volume: number; txns: number; debits: number; credits: number }>();
+    for (const ev of events) {
+      let name = "Direct Transfer";
+      if (ev.order_id?.startsWith("REF-")) {
+        const parts = ev.order_id.split("-");
+        name = parts.length > 1 && parts[1] ? `Ref #${parts[1]}` : "Bank Transfer";
+      } else if (ev.order_id?.startsWith("STMT-")) {
+        name = "Statement Txn";
+      } else if (ev.order_id) {
+        name = ev.order_id;
+      }
+      const curr = map.get(name) ?? { name, volume: 0, txns: 0, debits: 0, credits: 0 };
+      curr.volume += ev.revenue;
+      curr.txns += 1;
+      if (ev.event_name === "refund") curr.credits++;
+      else curr.debits++;
+      map.set(name, curr);
+    }
+    return Array.from(map.values())
+      .sort((a, b) => b.volume - a.volume)
+      .slice(0, 5);
+  }, [events]);
+
+  const maxVol = Math.max(...topEntities.map((e) => e.volume), 1);
+
+  return (
+    <div className="panel chart-panel">
+      <div className="chart-header">
+        <div>
+          <h3>Top Transacting Counterparties &amp; VPAs</h3>
+          <p className="muted">Highest volume merchant and transfer endpoints</p>
+        </div>
+      </div>
+
+      {topEntities.length === 0 ? (
+        <p className="muted" style={{ padding: "2rem", textAlign: "center" }}>
+          No counterparty entities found.
+        </p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "0.5rem" }}>
+          {topEntities.map((ent) => {
+            const pct = Math.max((ent.volume / maxVol) * 100, 5);
+            return (
+              <div key={ent.name} style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem" }}>
+                  <span style={{ color: "#f8fafc", fontWeight: 500 }}>{ent.name}</span>
+                  <span style={{ color: "#38bdf8", fontWeight: 600 }}>
+                    {currency} {ent.volume.toFixed(2)}{" "}
+                    <span style={{ color: "#94a3b8", fontWeight: 400 }}>({ent.txns} txns)</span>
+                  </span>
+                </div>
+                <div className="progress-bg" style={{ height: "6px" }}>
+                  <div
+                    className="progress-fill"
+                    style={{
+                      width: `${pct}%`,
+                      background: "linear-gradient(90deg, #38bdf8, #818cf8)",
+                    }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

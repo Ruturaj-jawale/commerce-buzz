@@ -1,8 +1,9 @@
 """SQLAlchemy engine and session factory. Swap DATABASE_URL to use PostgreSQL later."""
 
+import json
 from collections.abc import Generator
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
@@ -54,5 +55,52 @@ def init_db() -> None:
                             connection.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {column.name} {ddl_type}{default}"))
                     except Exception:
                         pass
+    except Exception:
+        pass
+
+    # Ensure any bank-statement payments in Payment table are synchronized to AnalyticsEvent
+    try:
+        with Session(engine) as db:
+            from app.db.models import AnalyticsEvent, Payment
+            payments = db.scalars(select(Payment).where(Payment.provider == "bank-statement")).all()
+            if payments:
+                existing_keys = set(
+                    db.scalars(
+                        select(AnalyticsEvent.idempotency_key).where(
+                            AnalyticsEvent.provider == "bank-statement"
+                        )
+                    ).all()
+                )
+                added = 0
+                for p in payments:
+                    idem_key = f"stmt-{p.organization_id}-{p.payment_ref}"
+                    if idem_key not in existing_keys:
+                        event_name = "refund" if (p.direction == "CREDIT" or p.status == "returned") else "purchase"
+                        db.add(
+                            AnalyticsEvent(
+                                organization_id=p.organization_id,
+                                storefront_id=p.storefront_id,
+                                provider="bank-statement",
+                                event_name=event_name,
+                                order_id=p.payment_ref,
+                                revenue=p.amount,
+                                currency=p.currency,
+                                properties_json=json.dumps({
+                                    "channel": p.channel,
+                                    "customer_id": p.entity_name,
+                                    "payment_method": p.channel,
+                                    "narration": p.raw_narration,
+                                    "reference_no": p.reference_no,
+                                    "direction": p.direction,
+                                    "idempotency_key": idem_key,
+                                }),
+                                idempotency_key=idem_key,
+                                occurred_at=p.occurred_at,
+                            )
+                        )
+                        existing_keys.add(idem_key)
+                        added += 1
+                if added > 0:
+                    db.commit()
     except Exception:
         pass

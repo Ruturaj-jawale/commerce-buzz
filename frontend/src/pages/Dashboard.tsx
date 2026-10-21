@@ -14,6 +14,8 @@ import {
   BankingRailRiskChart,
   StatementTicketSizeChart,
   PaymentFunnelChart,
+  ReversalReconciliationFlowChart,
+  CounterpartyLeaderboardChart,
 } from "../components/AnalyticsCharts";
 import { RiskAssessmentPanel } from "../components/RiskAssessmentPanel";
 import {
@@ -347,49 +349,69 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
                 events={events}
                 currency={bankRiskSummary?.currency ?? currency}
               />
+              <ReversalReconciliationFlowChart
+                bankRiskSummary={bankRiskSummary}
+                currency={bankRiskSummary?.currency ?? currency}
+                onViewRisk={() => setView("risk")}
+                onImport={() => setView("import")}
+              />
+            </section>
+
+            {/* ── Level 3 Bank Widgets: Top Counterparties & Zero-Trust Audit ── */}
+            <section className="two-column">
+              <CounterpartyLeaderboardChart
+                events={events}
+                currency={bankRiskSummary?.currency ?? currency}
+              />
               <div className="panel chart-panel">
                 <div className="chart-header">
                   <div>
-                    <h3>Automated Reversal Reconciliation</h3>
-                    <p className="muted">Dual-state RRN &amp; UTR settlement matching engine</p>
+                    <h3>Zero-Trust Data Governance &amp; Audit</h3>
+                    <p className="muted">Dual-entry balance verification &amp; PII/PCI security</p>
                   </div>
                 </div>
-                <div style={{ display: "grid", gap: "1rem", marginTop: "1rem" }}>
+                <div style={{ display: "grid", gap: "0.85rem", marginTop: "1rem" }}>
                   <div
                     style={{
                       background: "#0f172a",
-                      padding: "1rem",
+                      padding: "0.85rem 1rem",
                       borderRadius: "8px",
                       border: "1px solid #1e293b",
                     }}
                   >
-                    <h4 style={{ margin: "0 0 0.5rem 0", color: "#60a5fa" }}>
-                      RRN Reference Matching
+                    <h4 style={{ margin: "0 0 0.35rem 0", color: "#38bdf8", fontSize: "0.88rem" }}>
+                      🛡️ Client-Side PII/PCI Sanitization
                     </h4>
-                    <p style={{ margin: 0, fontSize: "0.85rem", color: "#cbd5e1", lineHeight: 1.5 }}>
-                      When reversal narrations (e.g., <em>FAILED TXN REFUND</em> or{" "}
-                      <em>ATM CASH DISPENSE REV</em>) are detected, the system pairs them with prior
-                      debits via RRN, updates the debit to <strong>failed</strong>, and marks the return
-                      as <strong>returned</strong>.
+                    <p style={{ margin: 0, fontSize: "0.82rem", color: "#cbd5e1", lineHeight: 1.45 }}>
+                      Account numbers, card PANs, and contact details are redacted before ingestion, ensuring full compliance with payment security standards.
                     </p>
                   </div>
                   <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
                     <button
                       type="button"
-                      onClick={() => setView("risk")}
+                      onClick={() => setView("transactions")}
                       style={{
-                        background: "linear-gradient(90deg, #7c3aed, #db2777)",
-                        border: "none",
+                        background: "#1e293b",
+                        border: "1px solid #334155",
+                        color: "#f8fafc",
+                        fontSize: "0.82rem",
+                        padding: "0.5rem 0.85rem",
                       }}
                     >
-                      🛡️ View Risk Assessment
+                      💳 View All Statement Transactions →
                     </button>
                     <button
                       type="button"
-                      onClick={() => setView("import")}
-                      style={{ background: "#334155", border: "none" }}
+                      onClick={() => setView("risk")}
+                      style={{
+                        background: "rgba(124, 58, 237, 0.2)",
+                        border: "1px solid #7c3aed",
+                        color: "#c084fc",
+                        fontSize: "0.82rem",
+                        padding: "0.5rem 0.85rem",
+                      }}
                     >
-                      📄 Import Bank Statement
+                      ⚡ Risk &amp; Decline Sentinel
                     </button>
                   </div>
                 </div>
