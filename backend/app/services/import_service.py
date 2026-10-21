@@ -155,6 +155,9 @@ class ImportService:
 
     def get_status(self, db: Session, organization: Organization, batch_id: int) -> ImportStatusRead:
         batch = self._get_owned(db, organization, batch_id)
+        if batch.status == "importing":
+            self._jobs.drain_batch(db, batch.id, max_jobs=50)
+            db.refresh(batch)
         read = self._to_read(db, batch)
         issues = [ValidationIssue(**issue) for issue in json.loads(batch.issues_json)]
         failed_jobs = db.scalars(

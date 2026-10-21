@@ -25,10 +25,10 @@ def get_db() -> Generator[Session, None, None]:
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
-    # Lightweight compatibility upgrade for local development databases created before Phase 2.
-    # Production schema changes should be applied through versioned migrations.
-    if settings.database_url.startswith("sqlite"):
+    # Lightweight schema compatibility upgrade for databases created before new columns were added.
+    try:
         inspector = inspect(engine)
+        is_pg = not settings.database_url.startswith("sqlite")
         with engine.begin() as connection:
             for table in Base.metadata.tables.values():
                 if table.name not in inspector.get_table_names():
@@ -47,4 +47,12 @@ def init_db() -> None:
                             default = f" DEFAULT {int(arg)}"
                         elif isinstance(arg, (int, float)):
                             default = f" DEFAULT {arg}"
-                    connection.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {column.name} {ddl_type}{default}"))
+                    try:
+                        if is_pg:
+                            connection.execute(text(f"ALTER TABLE {table.name} ADD COLUMN IF NOT EXISTS {column.name} {ddl_type}{default}"))
+                        else:
+                            connection.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {column.name} {ddl_type}{default}"))
+                    except Exception:
+                        pass
+    except Exception:
+        pass

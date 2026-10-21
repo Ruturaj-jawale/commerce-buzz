@@ -569,13 +569,45 @@ export function ImportWizard({
     setBusy(true);
     setError(null);
     try {
-      await startImport(batch.id);
+      const initialBatch = await startImport(batch.id);
+      setStatus({ batch: initialBatch, issues: [], job_errors: [] });
+      if (initialBatch.status === "completed" || initialBatch.status === "failed") {
+        if (initialBatch.status === "completed") onImported();
+        return;
+      }
       for (let attempt = 0; attempt < 90; attempt += 1) {
         await new Promise((resolve) => window.setTimeout(resolve, 800));
         const current = await fetchImport(batch.id);
         setStatus(current);
         if (current.batch.status === "completed" || current.batch.status === "failed") {
           if (current.batch.status === "completed") onImported();
+          break;
+        }
+      }
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onRefreshStatus() {
+    if (!batch) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const current = await fetchImport(batch.id);
+      setStatus(current);
+      if (current.batch.status === "completed" || current.batch.status === "failed") {
+        if (current.batch.status === "completed") onImported();
+        return;
+      }
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 800));
+        const next = await fetchImport(batch.id);
+        setStatus(next);
+        if (next.batch.status === "completed" || next.batch.status === "failed") {
+          if (next.batch.status === "completed") onImported();
           break;
         }
       }
@@ -991,19 +1023,30 @@ export function ImportWizard({
             </form>
           ) : (
             /* Phase: result */
-            <div style={{ padding: "1.5rem", background: "rgba(59, 130, 246, 0.12)", borderRadius: "10px", border: "1px solid rgba(59, 130, 246, 0.3)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", color: "#93c5fd", fontSize: "1.1rem", fontWeight: 700 }}>
-                <span>✅</span>
-                <span>Statement Imported Successfully ({stmtResult?.format_detected})</span>
+            <div style={{
+              padding: "1.5rem",
+              background: stmtResult?.rows_ingested === 0 ? "rgba(239, 68, 68, 0.12)" : "rgba(59, 130, 246, 0.12)",
+              borderRadius: "10px",
+              border: `1px solid ${stmtResult?.rows_ingested === 0 ? "rgba(239, 68, 68, 0.35)" : "rgba(59, 130, 246, 0.3)"}`,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", color: stmtResult?.rows_ingested === 0 ? "#fca5a5" : "#93c5fd", fontSize: "1.1rem", fontWeight: 700 }}>
+                <span>{stmtResult?.rows_ingested === 0 ? "⚠️" : "✅"}</span>
+                <span>
+                  {stmtResult?.rows_ingested === 0
+                    ? `Statement Import Incomplete (0 of ${stmtResult?.rows_parsed} rows persisted)`
+                    : `Statement Imported Successfully (${stmtResult?.format_detected})`}
+                </span>
               </div>
               <p style={{ margin: "0.4rem 0 1rem", fontSize: "0.85rem", color: "#cbd5e1" }}>
-                Transactions were normalized, sensitive data redacted, and reversals automatically linked.
+                {stmtResult?.rows_ingested === 0
+                  ? "The statement was parsed, but rows could not be saved to the database. Review the error details below."
+                  : "Transactions were normalized, sensitive data redacted, and reversals automatically linked."}
               </p>
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "1rem", marginTop: "1rem" }}>
                 <div style={{ background: "rgba(0,0,0,0.25)", padding: "1rem", borderRadius: "8px" }}>
                   <div style={{ fontSize: "0.75rem", color: "#94a3b8" }}>TRANSACTIONS INGESTED</div>
-                  <div style={{ fontSize: "1.6rem", fontWeight: 800, color: "#fff", marginTop: "0.25rem" }}>
+                  <div style={{ fontSize: "1.6rem", fontWeight: 800, color: stmtResult?.rows_ingested === 0 ? "#f87171" : "#fff", marginTop: "0.25rem" }}>
                     {stmtResult?.rows_ingested} <span style={{ fontSize: "0.85rem", color: "#94a3b8" }}>/ {stmtResult?.rows_parsed}</span>
                   </div>
                 </div>
@@ -1028,8 +1071,20 @@ export function ImportWizard({
                 </div>
               </div>
 
+              {/* Error messages if any */}
+              {stmtResult?.errors && stmtResult.errors.length > 0 && (
+                <div style={{ marginTop: "1rem", padding: "0.85rem 1rem", background: "rgba(239, 68, 68, 0.15)", border: "1px solid rgba(239, 68, 68, 0.35)", borderRadius: "8px", color: "#fca5a5", fontSize: "0.82rem" }}>
+                  <strong>Error details:</strong>
+                  <ul style={{ margin: "0.35rem 0 0 1.25rem", padding: 0 }}>
+                    {stmtResult.errors.slice(0, 5).map((err, i) => (
+                      <li key={i}>{err}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               <div style={{ display: "flex", gap: "1rem", marginTop: "1.5rem" }}>
-                {onViewTransactions && (
+                {onViewTransactions && stmtResult && stmtResult.rows_ingested > 0 && (
                   <button
                     type="button"
                     className="primary"
@@ -1369,11 +1424,16 @@ export function ImportWizard({
               </tbody>
             </table>
           ) : null}
-          {done ? (
+          <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem" }}>
+            {!done ? (
+              <button type="button" disabled={busy} onClick={() => void onRefreshStatus()}>
+                {busy ? "Processing…" : "Refresh / Resume Progress"}
+              </button>
+            ) : null}
             <button type="button" onClick={onReset}>
               Import another file or document
             </button>
-          ) : null}
+          </div>
         </div>
       ) : null}
         </>

@@ -46,28 +46,46 @@ class IngestionJobService:
             raise HTTPException(status_code=404, detail="Ingestion job not found")
         return IngestionJobRead.model_validate(job)
 
-    def claim_next(self, db: Session) -> IngestionJob | None:
-        # PostgreSQL locks one candidate so independently deployed workers do not process it twice.
-        job = db.scalar(
+    def claim_next(self, db: Session, import_batch_id: int | None = None) -> IngestionJob | None:
+        lease_cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=get_settings().ingestion_worker_lease_seconds)
+        stmt = (
             select(IngestionJob)
-            .where(or_(IngestionJob.status == "queued", (IngestionJob.status == "processing") & (IngestionJob.claimed_at < datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=get_settings().ingestion_worker_lease_seconds))), IngestionJob.attempts < get_settings().ingestion_worker_max_attempts)
+            .where(
+                or_(
+                    IngestionJob.status == "queued",
+                    (IngestionJob.status == "processing")
+                    & (
+                        IngestionJob.claimed_at.is_(None)
+                        | (IngestionJob.claimed_at < lease_cutoff)
+                    ),
+                ),
+                or_(
+                    IngestionJob.attempts.is_(None),
+                    IngestionJob.attempts < get_settings().ingestion_worker_max_attempts,
+                ),
+            )
             .order_by(IngestionJob.id)
             .with_for_update(skip_locked=True)
             .limit(1)
         )
+        if import_batch_id is not None:
+            stmt = stmt.where(IngestionJob.import_batch_id == import_batch_id)
+
+        job = db.scalar(stmt)
         if job is None:
             return None
         job.status = "processing"
         job.claimed_at = datetime.now(UTC).replace(tzinfo=None)
-        job.attempts += 1
+        job.attempts = (job.attempts or 0) + 1
         db.commit()
         db.refresh(job)
         return job
 
-    def process_next(self, db: Session) -> bool:
-        job = self.claim_next(db)
+    def process_next(self, db: Session, import_batch_id: int | None = None) -> bool:
+        job = self.claim_next(db, import_batch_id=import_batch_id)
         if job is None:
             return False
+        job_id = job.id
         try:
             organization = db.get(Organization, job.organization_id)
             if organization is None:
@@ -80,10 +98,22 @@ class IngestionJobService:
             job.processed_at = datetime.now(UTC).replace(tzinfo=None)
             job.claimed_at = None
         except Exception as exc:
-            job.status = "queued" if job.attempts < get_settings().ingestion_worker_max_attempts else "failed"
-            job.error_message = "Ingestion failed. Retry later or contact support."
-            job.error_code = "INGESTION_FAILED"
-            job.processed_at = datetime.now(UTC).replace(tzinfo=None) if job.status == "failed" else None
-            job.claimed_at = None
+            db.rollback()
+            refreshed = db.get(IngestionJob, job_id)
+            if refreshed is not None:
+                refreshed.status = "queued" if (refreshed.attempts or 0) < get_settings().ingestion_worker_max_attempts else "failed"
+                refreshed.error_message = str(exc)[:500]
+                refreshed.error_code = "INGESTION_FAILED"
+                refreshed.processed_at = datetime.now(UTC).replace(tzinfo=None) if refreshed.status == "failed" else None
+                refreshed.claimed_at = None
         db.commit()
         return True
+
+    def drain_batch(self, db: Session, batch_id: int, max_jobs: int = 500) -> int:
+        """Process queued ingestion jobs for a specific import batch synchronously."""
+        processed = 0
+        for _ in range(max_jobs):
+            if not self.process_next(db, import_batch_id=batch_id):
+                break
+            processed += 1
+        return processed

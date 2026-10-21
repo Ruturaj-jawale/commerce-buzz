@@ -971,10 +971,8 @@ def ingest_and_record_statement(
 
             if row.direction == "CREDIT":
                 event_name = "refund"
-                total_credit += row.amount
             else:
                 event_name = "purchase"
-                total_debit += row.amount
 
             occurred_at = datetime.utcnow()
             if row.date:
@@ -1038,6 +1036,10 @@ def ingest_and_record_statement(
 
             savepoint.commit()
             rows_ingested += 1
+            if row.direction == "CREDIT":
+                total_credit += row.amount
+            else:
+                total_debit += row.amount
         except Exception as exc:
             savepoint.rollback()
             logger.warning("Failed to land statement row: %s", exc)

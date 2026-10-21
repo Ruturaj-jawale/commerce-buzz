@@ -34,14 +34,13 @@ async def _ingestion_worker_loop() -> None:
     loop = asyncio.get_running_loop()
     logger.info("In-process ingestion worker started (poll=%.1fs)", _POLL_SECONDS)
 
+    def _process_one() -> bool:
+        with SessionLocal() as db:
+            return service.process_next(db)
+
     while True:
         try:
-            db = SessionLocal()
-            try:
-                processed = await loop.run_in_executor(None, service.process_next, db)
-            finally:
-                db.close()
-
+            processed = await loop.run_in_executor(None, _process_one)
             if not processed:
                 await asyncio.sleep(_POLL_SECONDS)
         except asyncio.CancelledError:
