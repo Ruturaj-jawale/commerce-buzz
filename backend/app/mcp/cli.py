@@ -9,7 +9,13 @@ import json
 import logging
 import os
 import sys
+from pathlib import Path
 from typing import Any
+
+# Ensure backend root is in sys.path even when cli.py is invoked directly
+_backend_dir = str(Path(__file__).resolve().parent.parent.parent)
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
 
 from app.core.config import get_settings
 from app.db.database import SessionLocal, init_db
