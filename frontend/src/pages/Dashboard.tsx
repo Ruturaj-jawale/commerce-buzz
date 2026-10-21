@@ -10,6 +10,10 @@ import {
   ChannelBreakdownChart,
   OrderDistributionChart,
   PaymentRecoveryWidget,
+  StatementCashFlowChart,
+  BankingRailRiskChart,
+  StatementTicketSizeChart,
+  PaymentFunnelChart,
 } from "../components/AnalyticsCharts";
 import { RiskAssessmentPanel } from "../components/RiskAssessmentPanel";
 import {
@@ -325,77 +329,29 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
               />
             </section>
 
-            {/* ── Level 1 Bank Widgets: Channel Breakdown & Reversal Health ── */}
+            {/* ── Level 1 Bank Widgets: Statement Cash Flow & Rail Performance ── */}
             <section className="two-column">
-              <div className="panel chart-panel">
-                <div className="chart-header">
-                  <div>
-                    <h3>Channel Breakdown</h3>
-                    <p className="muted">
-                      ATM, UPI, POS card swipe, online card, and bank transfers
-                    </p>
-                  </div>
-                </div>
-                <div style={{ display: "grid", gap: "0.85rem", marginTop: "1rem" }}>
-                  {bankRiskSummary?.channel_breakdown.map((ch) => (
-                    <div
-                      key={ch.channel}
-                      style={{
-                        background: "#0f172a",
-                        padding: "0.85rem 1rem",
-                        borderRadius: "8px",
-                        border: "1px solid #1e293b",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          marginBottom: "0.35rem",
-                        }}
-                      >
-                        <strong>{ch.channel.replace("_", " ")}</strong>
-                        <span
-                          style={{
-                            color: ch.failure_rate_percentage > 20 ? "#ef4444" : "#10b981",
-                            fontWeight: 600,
-                          }}
-                        >
-                          {ch.failure_rate_percentage.toFixed(1)}% Failure Rate
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          fontSize: "0.82rem",
-                          color: "#94a3b8",
-                        }}
-                      >
-                        <span>
-                          {ch.total_transactions} txns · Vol: {bankRiskSummary.currency}{" "}
-                          {ch.total_volume.toFixed(2)}
-                        </span>
-                        <span>
-                          {ch.failed_transactions} failed · {ch.returned_transactions} reversed
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                  {(!bankRiskSummary || bankRiskSummary.channel_breakdown.length === 0) && (
-                    <p className="muted" style={{ padding: "1.5rem", textAlign: "center" }}>
-                      No statement feeds imported yet. Upload an SBI statement CSV/XLSX to populate
-                      rail metrics.
-                    </p>
-                  )}
-                </div>
-              </div>
+              <StatementCashFlowChart
+                events={events}
+                currency={bankRiskSummary?.currency ?? currency}
+              />
+              <BankingRailRiskChart
+                channelBreakdown={bankRiskSummary?.channel_breakdown ?? []}
+                currency={bankRiskSummary?.currency ?? currency}
+              />
+            </section>
 
+            {/* ── Level 2 Bank Widgets: Denomination Ticket Breakdown & Reversal Engine ── */}
+            <section className="two-column">
+              <StatementTicketSizeChart
+                events={events}
+                currency={bankRiskSummary?.currency ?? currency}
+              />
               <div className="panel chart-panel">
                 <div className="chart-header">
                   <div>
                     <h3>Automated Reversal Reconciliation</h3>
-                    <p className="muted">Dual-state RRN & UTR settlement matching engine</p>
+                    <p className="muted">Dual-state RRN &amp; UTR settlement matching engine</p>
                   </div>
                 </div>
                 <div style={{ display: "grid", gap: "1rem", marginTop: "1rem" }}>
@@ -488,7 +444,7 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
               <OrderDistributionChart events={events} currency={currency} />
             </section>
 
-            {/* ── Level 3 Graphs: Payment Lifecycle / Risk & Sources Status ── */}
+            {/* ── Level 3 Graphs: Payment Lifecycle / Risk & Funnel ── */}
             <section className="two-column">
               <PaymentRecoveryWidget
                 paymentMetrics={paymentMetrics}
@@ -496,29 +452,49 @@ export function Dashboard({ session, onLogout }: { session: MeResponse; onLogout
                 refundSummary={refundSummary}
                 currency={currency}
               />
-              <div className="panel chart-panel">
-                <div className="chart-header">
-                  <div>
-                    <h3>Integration Monitors</h3>
-                    <p className="muted">Live status of connected data sources</p>
-                  </div>
+              <PaymentFunnelChart
+                paymentMetrics={paymentMetrics}
+                refundSummary={refundSummary}
+                currency={currency}
+              />
+            </section>
+
+            {/* ── Level 4: Connected Systems & Integration Monitors ── */}
+            <section className="panel chart-panel">
+              <div className="chart-header">
+                <div>
+                  <h3>Integration Monitors</h3>
+                  <p className="muted">Live status of connected commerce data sources and ingestion endpoints</p>
                 </div>
-                {storefronts.length ? (
-                  <div className="integration-list-box">
-                    {storefronts.map((store) => (
-                      <p className="integration-row" key={store.id}>
-                        <span className="dot" />
-                        <strong>{store.name}</strong>
-                        <small>{store.source} · {store.status}</small>
-                      </p>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="muted" style={{ padding: "1.5rem", textAlign: "center" }}>
-                    No sources connected yet.
-                  </p>
-                )}
               </div>
+              {storefronts.length ? (
+                <div className="integration-list-box" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0.75rem" }}>
+                  {storefronts.map((store) => (
+                    <div
+                      key={store.id}
+                      style={{
+                        background: "#0f172a",
+                        border: "1px solid #1e293b",
+                        borderRadius: "8px",
+                        padding: "0.75rem 1rem",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.6rem",
+                      }}
+                    >
+                      <span className="dot" style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#10b981", display: "inline-block" }} />
+                      <div>
+                        <strong style={{ display: "block", fontSize: "0.88rem", color: "#f8fafc" }}>{store.name}</strong>
+                        <small style={{ color: "#94a3b8", fontSize: "0.75rem" }}>{store.source} · {store.status}</small>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted" style={{ padding: "1.5rem", textAlign: "center" }}>
+                  No sources connected yet.
+                </p>
+              )}
             </section>
           </>
         )}
